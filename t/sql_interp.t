@@ -129,6 +129,10 @@ interp_test(['WHERE', {x => $x, y => sql_literal('z')}],
             ['WHERE (y=z AND x=?)', $x],
             'WHERE hashref of \$x, sql_literal');
 
+# error handling
+error_test(['SELECT', []], qr/unrecognized.*array.*select/i, 'err1');
+error_test(['IN', {}], qr/unrecognized.*hash.*in/i, 'err2');
+
 sub interp_test
 {
     my($snips, $expect, $name) = @_;
@@ -139,3 +143,11 @@ sub interp_test
     is_deeply([$sql_interp2->(@$snips)], $expect, "$name closure2");
 }
 
+sub error_test
+{
+    my($list, $re, $name) = @_;
+    eval {
+        sql_interp @$list;
+    };
+    like($@, $re, $name);
+}

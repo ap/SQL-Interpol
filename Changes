@@ -133,4 +133,12 @@
 
 	- reorganized test cases
 
+0.31_01
+
+	- SQL::Interpolate: Improved error reporting by sql_interp
+	  (recommended by mark s)
+
+	- DBIx::Interpolate: Added Carp
+
+	- Other: fixed links in POD
 

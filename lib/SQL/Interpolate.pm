@@ -1,6 +1,6 @@
 package SQL::Interpolate;
 
-our $VERSION = "0.30";
+our $VERSION = "0.31_01";
 
 use strict;
 use base qw(Exporter);
@@ -57,7 +57,7 @@ sub new
 
     my $dbh;
     my $filters = [];
-    while(ref($_[0]) ne '') {
+    while(ref $_[0] ne '') {
         if(UNIVERSAL::isa($_[0], 'DBI::db')) {
             $dbh = shift;
         }
@@ -76,9 +76,12 @@ sub new
        for my $name ($filter->macro_names()) {
            $filters_hash->{$name} = $filter; # note: up to one filter per macro
        }
-       push @$text_filters, $filter if $filter->can("filter_text");
-       push @$inits,   $filter if $filter->can("init");
-       push @$text_fragment_filters, $filter if $filter->can("filter_text_fragment");
+       push @$text_filters, $filter
+           if $filter->can("filter_text");
+       push @$inits, $filter
+           if $filter->can("init");
+       push @$text_fragment_filters, $filter
+           if $filter->can("filter_text_fragment");
     }
 
     my $self = bless {
@@ -119,7 +122,7 @@ sub sql_interp
     my $self;
     if(UNIVERSAL::isa($_[0], 'SQL::Interpolate')) {
         $self = $_[0];
-        $_->init() for @{$self->{inits}};
+        $_->init() for @{$self->{inits}}; # Q: ok if sql_interp recursive?
     }
 
     my @parts = sql_flatten @_;
@@ -127,24 +130,25 @@ sub sql_interp
     my $id = qr/[a-zA-Z_\.]+/;
     my @bind;
     my $varobj_used = 0;
+    my $idx = 0;
     foreach my $part (@parts) {
         my $varobj;
         my $bind_size = @bind;
-        if(ref($part) eq 'SQL::Interpolate::Variable') {
+        if(ref $part eq 'SQL::Interpolate::Variable') {
             unless(keys %$part == 1 && defined($part->{value})) {
                 $varobj = $part;
                 $varobj_used = 1;
             }
             $part = $part->{value};
         }
-        elsif(ref($part) eq 'SQL::Interpolate::Literal') {
+        elsif(ref $part eq 'SQL::Interpolate::Literal') {
             $part = $$part;
         }
 
-        if(ref($part)) {
+        if(ref $part) {
             if($sql =~ /\bIN\s*$/si) {
                 $part = [ $$part ] if ref $part eq 'SCALAR';
-                if(ref($part) eq 'ARRAY') {
+                if(ref $part eq 'ARRAY') {
                     if(@$part == 0) {
                         $sql =~ s/$id\s+IN\s*$/1/s or croak 'ASSERT';
                     }
@@ -155,11 +159,11 @@ sub sql_interp
                     }
                 }
                 else {
-                    croak "Unrecognized '$part'.";
+                    _error_item($idx, \@parts);
                 }
             }
-            elsif($sql =~ /\bSET\s*$/si && ref($part) eq 'HASH') {
-                croak 'ASSERT--num keys is zero' if keys %$part == 0;
+            elsif($sql =~ /\bSET\s*$/si && ref $part eq 'HASH') {
+                _error('Hash has zero elements.') if keys %$part == 0;
                 $sql .= " " . join(', ', map {
                     my $key = $_;
                     my $val = $part->{$key};
@@ -169,29 +173,29 @@ sub sql_interp
             elsif($sql =~ /\bINSERT[\w\s]*\sINTO\s*$id\s*$/si)
             {
                 $part = [ $$part ] if ref $part eq 'SCALAR';
-                if(ref($part) eq 'ARRAY') {
+                if(ref $part eq 'ARRAY') {
                     $sql .= " VALUES(" . join(', ', map {
                         _sql_interp_data($self, \@bind, \$varobj_used, $_);
                     } @$part) . ")";
                 }
-                elsif(ref($part) eq 'HASH') {
+                elsif(ref $part eq 'HASH') {
                     $sql .=
                         " (" . join(', ', keys %$part) . ")" .
                         " VALUES(" . join(', ', map {
                             _sql_interp_data($self, \@bind, \$varobj_used, $_);
                         } values %$part) . ")";
                 }
-                else { croak "Unrecognized '$part'."; }
+                else { _error_item($idx, \@parts); }
             }
-            elsif(ref($part) eq 'SCALAR') {
+            elsif(ref $part eq 'SCALAR') {
                 push @bind, $$part;
                 $sql .= ' ?';
             }
-            elsif(ref($part) eq 'HASH') # e.g. WHERE {x = 3, y = 4}
+            elsif(ref $part eq 'HASH') # e.g. WHERE {x = 3, y = 4}
             {
                 if(keys %$part == 0) {
                     $sql .= ' 1';
-	        }
+                }
                 else {
                     my $s = join ' AND ', map {
                         my $key = $_;
@@ -203,7 +207,7 @@ sub sql_interp
                     $sql .= $s;
                 }
             }
-            else { croak "Unrecognized '$part'."; }
+            else { _error_item($idx, \@parts); }
         }
         else {
             $sql .= ' ' unless $sql =~ /(^|\s)$/ || $part =~ /^\s/; # style
@@ -214,8 +218,9 @@ sub sql_interp
             my $num_pushed = @bind - $bind_size;
             for my $val (@bind[-$num_pushed..-1]) {
                 $val = [$val, $varobj];
-       	    }
+            }
         }
+        $idx++;
     }
     if($varobj_used) {
         for my $val (@bind) {
@@ -239,7 +244,7 @@ sub sql_flatten
 
     my $dbh;
     my $self;
-    if(ref($parts[0]) eq 'DBI::db') {
+    if(ref $parts[0] eq 'DBI::db') {
         $dbh = shift(@parts);
     } elsif(UNIVERSAL::isa($parts[0], 'SQL::Interpolate')) {
         $self = shift(@parts);
@@ -248,17 +253,17 @@ sub sql_flatten
 
     my $continue;
     do {
-        # IMPROVE: change order of expansion?
+        # Q: is the order of expansion ok?
         $continue = 0;
         @parts = map {
             if(UNIVERSAL::isa($_, 'SQL::Interpolate::Macro')) {
                 $continue = 1;
                 my @params = ($dbh);
-                my $filter = $self ? $self->{filters_hash}->{ref($_)} : undef;
+                my $filter = $self ? $self->{filters_hash}->{ref $_} : undef;
                 push @params, $filter if $filter;
                 $_->expand(@params);
             }
-            elsif(ref($_) eq '') { # SQL string or variable ref
+            elsif(ref $_ eq '') { # SQL string or variable ref
                 if($self && @{$self->{text_fragment_filters}} != 0) {
                     my @out;
                     for my $filter (@{$self->{text_fragment_filters}}) {
@@ -305,6 +310,19 @@ sub sql_var
     return SQL::Interpolate::Variable->new(@_);
 }
 
+# helper function to throw error
+sub _error_item
+{
+   my($idx, $partsref) = @_;
+   my $prev = $partsref->[$idx-1];
+   my $cur  = $partsref->[$idx];
+   _error("SQL::Interpolate error: Unrecognized '$cur' following '$prev' in interpolation list.");
+}
+sub _error
+{
+   croak "SQL::Interpolate error: $_[0]";
+}
+
 1;
 
 package SQL::Interpolate::Variable;
@@ -314,7 +332,9 @@ use Carp;
 sub new
 {
     my($class, $value, %params) = @_;
-    croak 'value not reference' if ! ref($value);
+    SQL::Interpolate::_error(
+        "Value '$value' in sql_var constructor is not a reference")
+        if ! ref $value;
     my $self = bless {value => $value, %params}, $class;
     return $self;
 }
@@ -374,7 +394,7 @@ SQL::Interpolate - Simplified interpolation of Perl variables into SQL statement
 
 =head2 Purpose
 
-SQL::Interpolate makes it easy to interpolates Perl variables into SQL
+SQL::Interpolate makes it easy to interpolate Perl variables into SQL
 statements.  It does so in a manner that is often more natural
 and less redundant, error-prone and restrictive than existing
 methods.  SQL::Interpolate converts a list of intermixed SQL fragments
@@ -392,9 +412,9 @@ bind values, which can become unwieldy:
 SQL::Interpolate eliminates the need for many SQL building techniques
 and enables you to achieve the same effect in a more Perl-like manner:
 
-  my($bind, @sql) = sql_interp
-      "INSERT INTO table", {color => $color, shape => $shape, width => $width,
-                            height => $height, length => $length} ;
+  my($bind, @sql) = sql_interp "INSERT INTO table",
+      {color => $color, shape  => $shape,
+       width => $width, height => $height, length => $length} ;
   $dbh->do($sql, undef, @bind);
 
 Besides the simple techniques shown in the SYNOPSIS, SQL::Interpolate
@@ -408,7 +428,7 @@ with source filtering and macros:
       ORDER BY t.date_modified DESC
   ]);
 
-Refer to the L<SEE ALSO> section for more details about these related
+Refer to the L</SEE ALSO> section for more details about these related
 modules.
 
 =head2 Security notes
@@ -440,15 +460,15 @@ The results are suitable for passing to DBI.
 
 The "interpolation list" can contain
 
-* SQL literals - strings or L<sql_literal|sql_literal> objects
+* SQL literals - strings or L</sql_literal> objects
 containing raw SQL fragments.
 
 * variable references - scalarrefs, arrayrefs, hashrefs, or
-L<sql_var|sql_var> objects referring to data to interpolate between
+L</sql_var> objects referring to data to interpolate between
 the SQL fragments
 
-* macros - strings or objects that are further expanded into simple
-strings and references.  They are explained later.
+* macros - strings or objects that are further expanded into
+other interpolation list items.  They are explained later.
 
 In addition, the first element in the interpolation list may
 optionally be a database handle of an instance of SQL::Interpolate.
@@ -458,7 +478,7 @@ a dialect of SQL).
 The basic interpolation process is as follows. Strings are appended to
 the output SQL ($sql), possibly with some content-dependent tweaking.
 Variable references are dereferenced, corresponding placeholders ("?")
-an other SQL are appended to $sql, and the corresponding values are
+and other SQL are appended to $sql, and the corresponding values are
 pushed onto @bind.
 
 B<Interpolation Examples>
@@ -543,7 +563,7 @@ the same variable references.
 Note that any scalar values inside an arrayref or hashref are by
 default treated as binding variables, not SQL fragments.  Still, the
 contained values may be sql_var, sql_literal, or macro objects.  See
-the L<Advanced INSERT> for examples.
+the L</Advanced INSERT> for examples.
 
 B<Error handling:> On error, sql_interp will croak with a string message.
 
@@ -636,7 +656,7 @@ all the variable references are transparently converted into sql_var
 objects, and the elements of @bind take a special form: an arrayref
 consisting of the bind value and the sql_var object that generated the
 bind value.  Note that a single sql_var holding an aggregate (arrayref
-or hashref) may generate multiple bind values.  See L<ADDITIONAL
+or hashref) may generate multiple bind values.  See L</ADDITIONAL
 EXAMPLES> for example usage.
 
 Note that sql_var and sql_literal are duals in a sense.
@@ -729,7 +749,6 @@ sql_flatten, and sql_interp, sql_var.
 
 =head2 Preparing and reusing a statement handle
 
-  my $prepared = 0;
   my $sth;
   for my $href (@array_of_hashrefs) {
      my @list = ("SELECT * FROM mytable WHERE", $href);
@@ -754,7 +773,7 @@ handles.
   #   @bind = ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
   #            [1, sql_var([1, 2], type => SQL_INTEGER)],
   #            [2, sql_var([1, 2], type => SQL_INTEGER)]);
-  die 'ASSERT' if ref($bind[0]) ne 'ARRAY';
+  die 'ASSERT' if ref $bind[0] ne 'ARRAY';
   my $sth = $dbh->prepare($sql);
   my $idx = 1;
   for my $var (@bind) {
@@ -802,7 +821,7 @@ change some, particularly with respect to macros.  Robustness, good
 style, simplicity/generality, and good documentation are design goals.
 
 Be careful to reference the variables you interpolate to prevent SQL
-injection (see discussion in L<sql_interp|sql_interp>).
+injection (see discussion in L</sql_interp>).
 
 The approach of this module does not guarantee that the generated SQL
 is valid for your particular database.  SQL::Interpolate does not

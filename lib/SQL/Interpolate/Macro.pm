@@ -565,7 +565,7 @@ The following more complicated design pattern can be used in such cases.
   sub new
   {
       my($class, @elements) = @_;
-
+  
       my $self = bless [
           @elements
       ], $class;
@@ -602,17 +602,17 @@ but supporting a stringified version of the macro in the SQL literals.
   ($sql, @bind) = $interp->("SELECT * FROM mytable WHERE MYPAREN(x=y)");
   # Equivalent to:
   #   sql_interp "SELECT * FROM mytable WHERE ", 
-
+  
   # helper function for simpler syntax
   sub myparen_filter
   {
       return MyParenFilter->new(@_);
   }
-
+  
   # SQL Filter class
   package MyParenFilter;
   our @ISA = qw(SQL::Interpolate::SQLFilter);
-
+  
   # Filter a single SQL string fragment (during expansion)
   sub filter_text_fragment
   {
@@ -639,7 +639,7 @@ but supporting a stringified version of the macro in the SQL literals.
   1;
 
 Your SQL filter may optionally have a few other methods that will be called by
-sql_interp if they exist.  See L<SQL::Interpolate::Macro Methods> for
+sql_interp if they exist.  See L</SQL::Interpolate::Macro Methods> for
 details.
 
 =head2 Related Macros and Filters
@@ -661,7 +661,7 @@ This allows one to write
           sales_order_line => {name => qr/([S-T])([p-r])/,
                            key => ['so_nbr', 'part_nbr']}
   ));
-
+  
   $dbx->selectall_arrayref(q[
       SELECT * FROM REL(S), REL(Sp), REL(p)
       WHERE LINK(S,Sp,p) AND S = 123
@@ -748,7 +748,7 @@ Table linking is not limited to SELECT statements either:
  WHERE LINK(Sp,p) AND S = $sonbr
 
 The utility of automatic table linking is probably best shown by a
-real-world example.  See Meset::MessageBoard in the L<SEE ALSO>
+real-world example.  See Meset::MessageBoard in the L</SEE ALSO>
 section.
 
 =head3 Future Changes
@@ -813,7 +813,7 @@ Possible improvements:
  - support multi-part keys?
  - support optional automatic inclusion of LINK(...).
 
-See the L<Automatic table linking> section above.
+See the L</Automatic table linking> section above.
 
 =back
 
@@ -914,7 +914,7 @@ C<sql_interp> is processed.
 
 Creates a macro object (SQL::Interpolate::Rel) that expands to a table and alias
 definition based on the database description given in relations(...).
-See the L<Automatic table linking> section above.
+See the L</Automatic table linking> section above.
 
 =item C<sql_link>
 
@@ -924,7 +924,7 @@ Creates a macro object (SQL::Interpolate::Link) that expands to a
 table join condition definition based on the database description given
 in relations(...).
 
-See the L<Automatic table linking> section above.
+See the L</Automatic table linking> section above.
 
 =back
 

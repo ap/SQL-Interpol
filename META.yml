@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name: SQL-Interpolate
-version: 0.30
+version: 0.31_01
 author:
   - David Manura (http://math2.org/david/contact)
 abstract: |-
@@ -12,13 +12,13 @@ recommends:
 provides:
   DBIx::Interpolate:
     file: lib/DBIx/Interpolate.pm
-    version: 0.30
+    version: 0.31_01
   DBIx::Interpolate::STX:
     file: lib/DBIx/Interpolate.pm
-    version: 0.30
+    version: 0.31_01
   SQL::Interpolate:
     file: lib/SQL/Interpolate.pm
-    version: 0.30
+    version: 0.31_01
   SQL::Interpolate::And:
     file: lib/SQL/Interpolate/Macro.pm
     version: 0.30
@@ -36,7 +36,7 @@ provides:
     version: 0.30
   SQL::Interpolate::Literal:
     file: lib/SQL/Interpolate.pm
-    version: 0.30
+    version: 0.31_01
   SQL::Interpolate::Macro:
     file: lib/SQL/Interpolate/Macro.pm
     version: 0.30
@@ -60,5 +60,5 @@ provides:
     version: 0.30
   SQL::Interpolate::Variable:
     file: lib/SQL/Interpolate.pm
-    version: 0.30
+    version: 0.31_01
 generated_by: Module::Build version 0.2607
