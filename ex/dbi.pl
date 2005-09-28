@@ -3,7 +3,7 @@
 
 use strict;
 use Data::Dumper;
-use DBIx::Interpolate;
+use DBIx::Interpolate qw(:all);
 use DBI;
 
 unlink('test.sqlt');
@@ -22,6 +22,11 @@ my $rows = $dbx->selectall_arrayref(qq[
 );
 print Dumper($rows);
 
+$rows = $dbx->selectall_hashref(qq[
+    SELECT * FROM mytable WHERE one > ], \3, key_field("one")
+);
+print Dumper($rows);
+
 # list context
 my @rows = $dbx->selectrow_array(qq[
     SELECT * FROM mytable WHERE one = ], \3
@@ -29,7 +34,7 @@ my @rows = $dbx->selectrow_array(qq[
 print Dumper(\@rows);
 
 # scalar context
-my $rows = $dbx->selectrow_array(qq[
+$rows = $dbx->selectrow_array(qq[
     SELECT one FROM mytable WHERE one = ], \3
 );
 print Dumper($rows);

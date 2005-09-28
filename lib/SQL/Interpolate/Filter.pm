@@ -9,7 +9,7 @@ use Text::Balanced qw/extract_quotelike
                       extract_variable
                       extract_codeblock/;
 
-our $VERSION = "0.30";
+our $VERSION = $SQL::Interpolate::VERSION;
 
 # Source filter.
 # Note: this could be improved as done in the POD of the development 2.0 version of
@@ -22,10 +22,8 @@ FILTER {
     while($_ !~ /\G$/gc) {
         my $sql;
         my $last_pos = pos();
-        if(/\G\s+/gc) {    # whitespace
-        }
-        elsif(/\G#.*/gc) { # comments
-        }
+        if(/\G\s+/gc) { }    # whitespace
+        elsif(/\G#.*/gc) { } # comments
         # sql// operators
         # FIX:should any other quote delimiters be added?
         elsif(/\G\bsql\b\s*(?=[\{\(\[\<\/])/gcs &&
@@ -318,7 +316,9 @@ to STDERR.
  SQL::Interpolate::SQL->new(qq[SELECT * FROM mytable WHERE x = ], \$x)
  ...
 
-=head1 LIMITATIONS
+=head1 DESIGN NOTES
+
+=head2 Limitations / characteristics
 
 Source filtering is somewhat experimental and has the potential to
 give unexpected results because lexing Perl is hard.  The module
@@ -328,7 +328,7 @@ always precise, especially for very obscure Perl constructs.  It
 should work fine though on many things.  If in doubt, check the output
 yourself by enabling the TRACE_FILTER option.
 
-=head2 TODO
+=head2 Proposed enhancements
 
 Support Text::Balanced 2.0 and improved Perl lexing.
 

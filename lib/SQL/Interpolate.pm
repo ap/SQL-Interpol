@@ -1,10 +1,10 @@
 package SQL::Interpolate;
 
-our $VERSION = "0.31_01";
+our $VERSION = "0.31";
 
 use strict;
-use base qw(Exporter);
 use Carp;
+use base qw(Exporter);
 
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
@@ -16,38 +16,52 @@ our %EXPORT_TAGS = (all => [qw(
 )]);
 our @EXPORT_OK = @{$EXPORT_TAGS{'all'}};
 
+# supported 'use' param names (useful to DBIx:Interpolate)
+our @USE_PARAMS = qw(FILTER TRACE_SQL TRACE_FILTER);
+
+# whether TRACE_SQL is enabled
 our $trace_sql = 0;
+
+# whether TRACE_FILTER is enabled
 our $trace_filter = 0;
 
 sub sql_flatten;
 
+# This import function processes any "use" parameters.
 sub import
 {
     my $class = shift;
 
-    my $do_filter = 0; # source filtering option
-    while(1) {
-        if(defined($_[0]) && $_[0] eq 'FILTER') {
-            shift;
+    my $do_filter = 0;   # whether TRACE_FILTER is enabled
+    my $inherit = 0;     # whether __INHERIT is enabled
+    my @list = ($class); # unprocessed params
+    while(@_) {
+        my $first = shift;
+        if($first eq 'FILTER') {
             $do_filter = shift;
         }
-        elsif(defined($_[0]) && $_[0] eq 'TRACE_SQL') {
-            shift;
+        elsif($first eq 'TRACE_SQL') {
             $trace_sql = shift;
-       }
-        elsif(defined($_[0]) && $_[0] eq 'TRACE_FILTER') {
-            shift;
-            $trace_filter = shift;
+            print STDERR "TRACE_SQL enabled\n" if $trace_sql;
         }
-        else { last; }
-     }
-    unshift @_, $class;
+        elsif($first eq 'TRACE_FILTER') {
+            $trace_filter = shift;
+            print STDERR "TRACE_FILTER enabled\n" if $trace_filter;
+        }
+        elsif($first eq '__INHERIT') {
+            # indicates that caller inherits from SQL::Interpolate
+            # (useful to DBIx::Interpolate)
+            $inherit = shift;
+        }
+        else { push @list, $first }
+    }
+    @_ = @list;
+    my $level = $inherit ? 2 : 1;
+    __PACKAGE__->export_to_level($level, @_);
 
-    __PACKAGE__->export_to_level(1, @_);
     if($do_filter) {
         require SQL::Interpolate::Filter;
-        SQL::Interpolate::SQL->export_to_level(1);
-        goto &SQL::Interpolate::Filter::import;
+        goto &SQL::Interpolate::Filter::import; # @_
     }
 }
 
@@ -95,7 +109,7 @@ sub new
     return $self;
 }
 
-# Helper function for sql_interp.
+# sql_interp helper function.
 # Interpolate data element in aggregate variable (hashref or arrayref).
 # $self - (may be undef)
 # $bindref - \@bind (is modified--appended to)
@@ -117,6 +131,26 @@ sub _sql_interp_data
     }
 }
 
+# sql_interp helper function to interpolate "key IN list",
+# assuming context ("WHERE", {key => $list, ...}).
+sub _in_list
+{
+    my($self, $bindref, $varobj_usedref, $key, $list) = @_;
+    if(@$list == 0) {
+        return "1=1";
+    }
+    else {
+        my @sqle;
+        for my $ele (@$list) {
+            my $sqle = _sql_interp_data($self, $bindref, $varobj_usedref, $ele);
+            push @sqle, $sqle;
+        }
+        my $sql2 = $key . " IN (" . join(', ', @sqle) . ")";
+        return $sql2;
+    }
+}
+
+
 sub sql_interp
 {
     my $self;
@@ -129,7 +163,8 @@ sub sql_interp
     my $sql = '';
     my $id = qr/[a-zA-Z_\.]+/;
     my @bind;
-    my $varobj_used = 0;
+    my $varobj_used = 0; # whether typed sql_var() ever used (if so,
+                         # format of @bind result is more complicated)
     my $idx = 0;
     foreach my $part (@parts) {
         my $varobj;
@@ -150,7 +185,7 @@ sub sql_interp
                 $part = [ $$part ] if ref $part eq 'SCALAR';
                 if(ref $part eq 'ARRAY') {
                     if(@$part == 0) {
-                        $sql =~ s/$id\s+IN\s*$/1/s or croak 'ASSERT';
+                        $sql =~ s/$id\s+IN\s*$/1=1/s or croak 'ASSERT';
                     }
                     else {
                         $sql .= " (" . join(', ', map {
@@ -191,16 +226,20 @@ sub sql_interp
                 push @bind, $$part;
                 $sql .= ' ?';
             }
-            elsif(ref $part eq 'HASH') # e.g. WHERE {x = 3, y = 4}
-            {
+            elsif(ref $part eq 'HASH') { # e.g. WHERE {x = 3, y = 4}
                 if(keys %$part == 0) {
-                    $sql .= ' 1';
+                    $sql .= ' 1=1';
                 }
                 else {
                     my $s = join ' AND ', map {
                         my $key = $_;
                         my $val = $part->{$key};
-                        "$key=" . _sql_interp_data($self, \@bind, \$varobj_used, $val);
+                        if(ref $val eq 'ARRAY') {
+                            _in_list($self, \@bind, \$varobj_used, $key, $val);
+                        }
+                        else {
+                            "$key=" . _sql_interp_data($self, \@bind, \$varobj_used, $val);
+                        }
                     } keys %$part;
                     $s = "($s)" if keys %$part > 1;
                     $s = " $s";
@@ -278,7 +317,7 @@ sub sql_flatten
             }
             else { $_ }
         } @parts;
-        #print Data::Dumper::Dumper(\@parts);
+        #DEBUG: print Data::Dumper::Dumper(\@parts);
     }
     while($continue);
 
@@ -363,90 +402,87 @@ SQL::Interpolate - Simplified interpolation of Perl variables into SQL statement
 =head1 SYNOPSIS
 
   use SQL::Interpolate qw(:all);
-  
-  my @colors = ('blue', 'green');
+
+  my $s = "blue"; my @v = (5, 6);  # sample data
+
+  # basic scalarref syntax and IN arrayref syntax
   my($sql, @bind) = sql_interp
-      q[SELECT * FROM mytable WHERE color IN], \@colors,
-      q[AND y =], \$x, q[OR], {z => 3, w => 2} ;
-  # Result:
-  #   $sql = "SELECT * FROM mytable WHERE color IN (?, ?) " .
-  #          "AND y = ? OR (z = ? AND w = ?)";
-  #   @bind = ('blue', 'green', $x, 3, 2);
+      "SELECT * FROM mytable WHERE color = ", \$s, "AND y IN", \@v;
+  # OUTPUT: $sql = "SELECT * FROM mytable WHERE color = ? AND y IN (?, ?)"
+  #         @bind = ("blue", 5, 6);
 
+  # shortcut hashref syntax (logical AND construct).
+  my($sql, @bind) = sql_interp
+      "SELECT * FROM mytable WHERE", {color => $s, y => \@v};
+  # OUTPUT: $sql = "SELECT * FROM mytable WHERE (color = ? AND y IN (?, ?))";
+  #         @bind = ("blue", 5, 6);
+
+  # shortcut hashref syntax (tuple in INSERT construct)
   ($sql, @bind) = sql_interp
-      "INSERT INTO table", {color => $color, shape => $shape} ;
-  # Result:
-  #   $sql = "INSERT INTO table (color, shape) VALUES(?, ?)";
-  #   @bind = ($color, $shape);
+      "INSERT INTO mytable", {color => $s, y => 1} ;
+  # OUTPUT: $sql = "INSERT INTO mytable (color, y) VALUES(?, ?)";
+  #         @bind = ("blue", 1);
 
+  # shortcut hashref syntax (tuple in UPDATE construct)
   ($sql, @bind) = sql_interp
-      q[UPDATE table SET], {color => $color, shape => $shape},
-      q[WHERE color <> ], \$skip_color ;
-  # Result:
-  #   $sql = "UPDATE table SET color = ?, shape = ?" .
-  #          "WHERE color <> ?";
-  #   @bind = ($color, $shape, $skip_color);
+      "UPDATE mytable SET", {color => $s, y => 1}, "WHERE y <> ", \2 ;
+  # OUTPUT: $sql = "UPDATE mytable SET color = ?, y = ? WHERE y <> ?";
+  #         @bind = ("blue", 1, 2);
 
-  # Passing any of the above results to DBI
-  $dbh->selectall_arrayref($sql, undef, @bind);
+  # sample DBI call
+  my $res = $dbh->selectall_arrayref($sql, undef, @bind);
 
 =head1 DESCRIPTION
 
 =head2 Purpose
 
-SQL::Interpolate makes it easy to interpolate Perl variables into SQL
-statements.  It does so in a manner that is often more natural
-and less redundant, error-prone and restrictive than existing
-methods.  SQL::Interpolate converts a list of intermixed SQL fragments
-and variables into a conventional SQL string and I<list of bind
-values>, which can be used directly or passed onto DBI.
+SQL::Interpolate interpolates Perl variables into SQL statements in a
+simplified manner.  It converts a list of intermixed SQL
+fragments and variable references into a conventional SQL string and
+I<list of bind values>, which can passed onto DBI or used directly.
 
-When using DBI, one traditionally interpolates reliably using
+When using plain DBI, one traditionally interpolates reliably with
 bind values, which can become unwieldy:
 
   $dbh->do(qq(
       INSERT INTO table (color, shape, width, height, length)
                   VALUES(?,     ?,     ?,     ?,      ?     )
-  ), undef, $new_color, $new_shape, $width, $height, $length);
+  ), undef, $c, $s, $w, $h, $l);
 
-SQL::Interpolate eliminates the need for many SQL building techniques
-and enables you to achieve the same effect in a more Perl-like manner:
+This may be ameliorated with "SQL building techniques,"
+but SQL::Interpolate eliminates much of this need with a terse
+Perl-like syntax:
 
-  my($bind, @sql) = sql_interp "INSERT INTO table",
-      {color => $color, shape  => $shape,
-       width => $width, height => $height, length => $length} ;
+  my($sql, @bind) = sql_interp
+      "INSERT INTO table",
+      {color => $c, shape => $s, width => $w, height => $h, length => $l};
   $dbh->do($sql, undef, @bind);
 
-Besides the simple techniques shown in the SYNOPSIS, SQL::Interpolate
-can further integrate with DBI and streamline the syntax
-with source filtering and macros:
+Besides the simple techniques shown in the SYNOPSIS, SQL-Interpolate
+includes a number of optional modules to further integrate
+SQL::Interpolate with DBI and streamline the syntax with source
+filtering and macros (see the L</SEE ALSO> section):
 
   my $rows = $dbx->selectall_arrayref(sql[
-      SELECT thid, date_modified, title, suid, state
+      SELECT thid, date, title, subject
       FROM threads
-      WHERE state <> $state AND suid IN @suids
-      ORDER BY t.date_modified DESC
+      WHERE date > $x AND subject IN @subjects
   ]);
-
-Refer to the L</SEE ALSO> section for more details about these related
-modules.
 
 =head2 Security notes
 
-SQL::Interpolate properly escapes or binds variables.  This
-recommended practice safeguards against an "SQL injection" attacks. The
+SQL::Interpolate properly binds or escapes variables.  This
+recommended practice safeguards against "SQL injection" attacks. The
 L<DBI|DBI> documentation has several links on the topic.
 
-=head2 Structure of this module
+=head1 API
 
 The central function of this module is C<sql_interp>, which when
-provided a list of items to interpolate, returns an SQL string and a
-list of bind values, which are typically then passed to DBI.  Other
-functions provide variants of this theme (e.g. OO and functional
-approaches) or supporting functionality, and some of the related
+provided a list of elements to interpolate, returns an SQL string and a
+list of bind values suitable for passing to DBI.  The rest
+of this module provides variants of this theme (e.g. functional and OO
+approaches) and supporting functionality, and some of the related
 modules wrap or extend C<sql_interp>.
-
-=head1 API
 
 =head2 C<sql_interp>
 
@@ -454,11 +490,12 @@ modules wrap or extend C<sql_interp>.
   ($sql, @bind) = $interp->sql_interp(@params);  # OO interface
 
 C<sql_interp()> strings together the given list of elements to
-interpolate and returns a properly formatted SQL string containing
-bind ("?") parameters along with the corresponding list of bind values.
-The results are suitable for passing to DBI.
+interpolate (the @params "interpolation list") and returns a properly
+formatted SQL string ($sql) containing bind "?" parameters and a the
+corresponding list of bind values (@bind).  The results are suitable
+for passing to DBI.
 
-The "interpolation list" can contain
+The "interpolation list" can contain elements of these types:
 
 * SQL literals - strings or L</sql_literal> objects
 containing raw SQL fragments.
@@ -467,132 +504,102 @@ containing raw SQL fragments.
 L</sql_var> objects referring to data to interpolate between
 the SQL fragments
 
-* macros - strings or objects that are further expanded into
-other interpolation list items.  They are explained later.
+* macros - objects (or certain string representing objects)
+that may be further expanded into previous two types of elements.  Macros
+are explained in L<SQL::Interpolate::Macro|SQL::Interpolate::Macro>.
 
 In addition, the first element in the interpolation list may
-optionally be a database handle of an instance of SQL::Interpolate.
-sql_interp and macros may use these to customize the output (e.g. for
-a dialect of SQL).
+optionally be a database handle or (for the OO interface) an instance
+of SQL::Interpolate.  sql_interp and macros may use this data to customize
+the output such as for a dialect of SQL.
 
 The basic interpolation process is as follows. Strings are appended to
-the output SQL ($sql), possibly with some content-dependent tweaking.
-Variable references are dereferenced, corresponding placeholders ("?")
-and other SQL are appended to $sql, and the corresponding values are
+the output SQL ($sql), possibly with some context-dependent tweaking.
+For each scalar variable reference, a corresponding placeholder ("?")
+and other SQL is appended to $sql, and the de-referenced value is
 pushed onto @bind.
 
 B<Interpolation Examples>
 
-B<Default behavior>
+ # sample data
+ my $s  = 3;                    # scalar
+ my $v  = [1, 2];               # arrayref (vector)
+ my $h  = {m => 1, n => 2};     # hashref
+ my $hv = {v = > $v, s => $s};  # hashref containing listref
+ Let $x stand for $s, $h, or $v.
 
- # Default behavior for scalarref
- INPUT:  "WHERE one=", $x
- OUTPUT: # if $x is a scalarref, e.g. \1
-         "WHERE one=?", $$x
+B<Default scalar behavior>
 
- # Default behavior for hashref
+ INPUT:  "foo", \$s, "bar"
+ OUTPUT: "foo ? bar", $s
+
+B<Default hashref behavior>
+
  INPUT:  "WHERE", $x
- OUTPUT: # if $x is a hashref, e.g. {one => 1, two => 2}
-         "WHERE x=? AND y=?", $x->{one}, $x->{two}
-
-B<INSERT statements>
-
- INPUT:  "INSERT INTO mytable", $x
- OUTPUT: # if $x is a hashref, e.g. {one => 1, two => 2}
-         "INSERT INTO mytable (one, two) VALUES(?, ?)",
-             $x->{one}, $x->{two}
- OUTPUT: # if $x is an arrayref, e.g. [1, 2]
-         "INSERT INTO mytable VALUES(?, ?)", @$x;
- OUTPUT: # if $x is a scalarref, e.g. \1
-         "INSERT INTO mytable VALUES(?)", $$x;
+ OUTPUT: "WHERE (m=? AND n=?)", $h->{m}, $h->{n}    # $x = $h
+ OUTPUT: "WHERE (v IN (?, ?) AND s = ?)", @$v, $s   # $x = $hv
 
 B<IN clause>
 
  INPUT:  "WHERE x IN", $x
- OUTPUT: # if $x is an arrayref, e.g. [1, 2]
-         "WHERE x IN (?, ?)", @$x
- OUTPUT: # if $x is an arrayref of length 0, e.g. []
-         "WHERE 1", @$x
- OUTPUT: # if $x is a scalarref, e.g. \1
-         "WHERE x in (?)", $$x
- # Note: Special handling for arrayref of length 0 is required
+ OUTPUT: "WHERE x IN (?)", $s                       # $x = $s
+ OUTPUT: "WHERE x IN (?, ?)", @$v                   # $x = $v
+ OUTPUT: "WHERE 1=1", @$x                           # @x = ()
+ # Note: An arrayref of length 0 is handled specially
  # because "WHERE x in ()" can be invalid SQL (e.g. MySQL).
+
+B<INSERT statements>
+
+ INPUT:  "INSERT INTO mytable", $x
+ OUTPUT: "INSERT INTO mytable VALUES(?)", $s;       # $x = $s
+ OUTPUT: "INSERT INTO mytable VALUES(?, ?)", @$v;   # $x = $v
+ OUTPUT: "INSERT INTO mytable (m, n) VALUES(?, ?)", # $x = $h
+         $h->{m}, $h->{n}
 
 B<UPDATE statements>
 
- INPUT:  "UPDATE mytable SET", $x
- OUTPUT: # if $x is a hashref, e.g. {one => 1, two => 2}
-         "UPDATE mytable SET one = ?, two = ?", 1, 2
+ INPUT:  "UPDATE mytable SET", $h
+ OUTPUT: "UPDATE mytable SET m = ?, n = ?", $h->{m}, $h->{n}
+
+B<Other rules>
 
 Whitespace is automatically added between parameters:
 
-  sql_interp "UPDATE", "mytable SET", {x => 2}, "WHERE y IN", \@colors;
-  # Result SQL: "UPDATE mytable SET x = ? WHERE y in (?, ?)"
+ INPUT:  "UPDATE", "mytable SET", {x => 2}, "WHERE y IN", \@colors;
+ OUTPUT: "UPDATE mytable SET x = ? WHERE y in (?, ?)", 2, @colors
 
-Note that variables must be passed as references (e.g. \$x or using
-using the sql// operator from source filtering), otherwise they will
-recognized as SQL fragments to be interpolated verbatim into the
-result SQL string, which negates the security and performance benefits
+Variables must be passed as references such as \$x (or using the
+sql// operator when source filtering is enabled); otherwise, they will
+processed as SQL fragments and interpolated verbatim into the
+result SQL string, negating the security and performance benefits
 of binding values.
 
-sql_interp will Do The Right Thing(TM) on trivial cases:
-
-  INPUT: "SELECT * FROM table WHERE color in", []
-  OUTPUT: "SELECT * FROM table WHERE 1"
-
-because the following mechanical answer is not generally valid SQL:
-
-  OUTPUT: SELECT * FROM table WHERE color IN ()
-
-SQL::Interpolate does not attempt to further optimize away such
-expressions since we can just as well let the database do this.
-Databases are designed to do query optimization, without loss of
-generality.
-
-Furthermore, variable interpolation is context-sensitive.  So,
-
-  sql_interp qq[INSERT INTO mytable ], {color => 'blue', shape => 'square'};
-  # Result SQL: INSERT INTO mytable (color, shape) VALUES(?, ?)
-
-  sql_interp qq[UPDATE mytable SET ], {color => 'blue', shape => 'square'};
-  # Result SQL: UPDATE mytable SET color = ?, shape = ?
-
-The two generate SQL containing a different SQL subexpressions for
-the same variable references.
-
-Note that any scalar values inside an arrayref or hashref are by
+Note that any scalar values I<inside> an arrayref or hashref are by
 default treated as binding variables, not SQL fragments.  Still, the
 contained values may be sql_var, sql_literal, or macro objects.  See
 the L</Advanced INSERT> for examples.
 
+sql_interp will Do The Right Thing(TM) on trivial cases:
+
+  INPUT: "SELECT * FROM table WHERE color IN", []
+  OUTPUT: "SELECT * FROM table WHERE 1=1"
+  # invalid to MySQL: SELECT * FROM table WHERE color IN ()
+
+SQL::Interpolate does not attempt to further optimize away such
+expressions.  Databases are designed to do query optimization, without
+loss of generality.
+
+Variable interpolation is context-sensitive.  The same variable
+references can generate different SQL sub-expressions depending on
+context:
+
+  INPUT:  "INSERT INTO mytable", $h
+  OUTPUT: "INSERT INTO mytable (m, n) VALUES(?, ?)", ...
+
+  INPUT:  "UPDATE mytable SET", $h
+  OUTPUT: "UPDATE mytable SET m = ?, n = ?", ...
+
 B<Error handling:> On error, sql_interp will croak with a string message.
-
-=head3 Macros
-
-Macros can be objects derived from
-L<SQL::Interpolate::Macro|SQL::Interpolate::Macro>, or then can be
-"stringified macros" existing as a convenience inside SQL strings.
-Stringified macros will be converted into real macro objects before
-processing.  Note that source filtering internally converts sql//
-quotes into macro objects.  A macro object can contain nested
-interpolation elements, and it can expand to these or others by
-macro expansion.
-
-Any macros in the interpolation list are flattened into simple
-strings and variable references (via the C<sql_flatten> function).
-This is performed I<before> interpolation so that only simple only
-strings and variable references need be interpolated.  Flattening
-involves converting any stringified macros into real macro objects and
-expanding macro objects into other interpolation elements (strings,
-variable references, and macro objects).  The process can be iterative
-since any macros generated by macro expansion (e.g. nested macros or
-otherwise) must be flattened themselves.
-
-The transformation process also contains a number of extension hooks,
-where code can be inserted to transform the interpolation list and/or
-the final $sql string.  Refer to
-L<SQL::Interpolate::Macro|SQL::Interpolate::Macro> for details on
-macro expansion and filtering.
 
 =head2 C<sql_literal>
 
@@ -600,27 +607,23 @@ macro expansion and filtering.
 
 C<sql_literal> creates an I<sql_literal> object (of type
 SQL::Interpolate::Literal), which provides a general way to represent
-an SQL literal, i.e. a fragment of SQL text.
+an SQL literal--i.e. a fragment of SQL text.
 
 $sql - string containing SQL fragment
 
-sql_literal objects are usually not needed because plain strings can
-instead represent SQL literals in an interpolation list.  However, if
-you want insert an SQL literal into an arrayref or hashref, it can not
-be done with a plain string because any scalar value in an arrayref or
-hashref is interpreted as a binding variable.  sql_literal objects
-must be used instead as shown:
+sql_literal objects are rarely needed because plain strings are often
+sufficient to represent SQL literals in an interpolation list.
+However, if you want insert an SQL literal as a value in an arrayref
+or hashref, it cannot be done with a plain string because any scalar
+value in an arrayref or hashref is interpreted as a binding variable.
+An sql_literal objects must be used explicitly:
 
   sql_interp "INSERT INTO mytable",
       {x => $x, y => sql_literal("CURRENT_TIMESTAMP")};
-  # Result: "INSERT INTO mytable (x, y) VALUES(?, CURRENT_TIMESTAMP)"
+  # OUTPUT: "INSERT INTO mytable (x, y) VALUES(?, CURRENT_TIMESTAMP)", $x
   
   sql_interp "INSERT INTO mytable", [$x, sql_literal("CURRENT_TIMESTAMP")];
-  # Result: "INSERT INTO mytable VALUES(?, CURRENT_TIMESTAMP)"
-  
-  sql_interp "SELECT * FROM mytable WHERE",
-      {x => $x, y => sql_literal("z")};
-  # Result: "SELECT * FROM mytable WHERE (x = ? AND y = z)"
+  # OUTPUT: "INSERT INTO mytable VALUES(?, CURRENT_TIMESTAMP)", $x
 
 =head2 C<sql_var>
 
@@ -635,21 +638,22 @@ $value_ref - variable reference contained
 $sql_type - any DBI SQL_DATA_TYPE (e.g. SQL_INTEGER).  Optional.
 Default is undef.
 
-Any other names parameters %params passed in will be saved into the
+Any other named parameters (%params) passed in will be saved into the
 object as attributes.
 
-sql_var objects are usually are not needed because variable references
-can be placed directly into an interpolation list.  sql_var objects
-primarily exist to address cases where DBI would bind the variable to
-a wrong type without a hint.  Examples:
+sql_var objects are rarely needed because variable references can be
+placed directly into an interpolation list.  sql_var objects primarily
+exist to address cases where additional information should be tagged
+onto the variable.  For example, DBI allows bind variables to be given
+an explicit type:
 
   my($sql, @bind) = sql_interp "SELECT * FROM mytable WHERE",
       "x=", \$x, "AND y=", sql_var(\$y, SQL_VARCHAR), "AND z IN",
       sql_var([1, 2], SQL_INTEGER);
-  # Sets
-  #   @bind = ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
-  #            [1, sql_var([1, 2], type => SQL_INTEGER)],
-  #            [2, sql_var([1, 2], type => SQL_INTEGER)]);
+  # OUTPUT: @bind =
+  #   ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
+  #    [1, sql_var([1, 2], type => SQL_INTEGER)],
+  #    [2, sql_var([1, 2], type => SQL_INTEGER)]);
 
 If the interpolation list contains at least one sql_var object, then
 all the variable references are transparently converted into sql_var
@@ -661,7 +665,7 @@ EXAMPLES> for example usage.
 
 Note that sql_var and sql_literal are duals in a sense.
 
-=head2 Additional Public Functions/Methods
+=head2 Additional public functions/methods
 
 =over 4
 
@@ -671,9 +675,10 @@ Note that sql_var and sql_literal are duals in a sense.
   my $sql_interp = $interp->make_sql_interp(@params); # OO
 
 Creates a closure that wraps the sql_interp function such that the
-parameters passed to the sql_interp consist of @params followed by the
-parameters passed to the closure.  This function is typically used to
-eliminate a need to always pass in a database handle into sql_interp:
+parameters passed to the sql_interp consist of @params following by
+the parameters passed to the closure.  This function is typically used
+to eliminate a need to always pass in a database handle into
+sql_interp:
 
   my $interp = make_sql_interp($dbh);
 
@@ -681,26 +686,26 @@ eliminate a need to always pass in a database handle into sql_interp:
 
 =item C<new()>
 
-Creates a new SQL::Interpolate object, which can configure the
-interpolation process.
-
  my $interp = new SQL::Interpolate([$dbh|$filter]...);
  @result = $interp->sql_interp([$dbh|$filter]...);
 
-The arguments are expected to be one of these optional values:
+Creates a new SQL::Interpolate object, which can configure the
+interpolation process.
 
-- $dbh - up to one DBI database handle.
+The arguments can be
+
+- $dbh - zero or one DBI database handle.
 
 - $filter - zero or more SQL filters (derived from
 L<SQL::Interpolate::SQLFilter|SQL::Interpolate::Macro>).
 
-The OO interface often not needed.  It is useful though if you need to
+The OO interface often not needed, but it is useful if you need to
 configure the behavior of many calls to sql_interp, such as when using
 some macros.
 
 =back
 
-=head2 Private Functions/Methods
+=head2 Private functions/methods
 
 =over 
 
@@ -709,19 +714,19 @@ some macros.
  @list_out = sql_flatten(@list_in);          # functional
  @list_out = $interp->sql_flatten(@list_in); # OO
 
-Flatten out an interpolation list and expands any macros until
+Fully expands all macros in an interpolation list such that
 only strings and variables references (no macros) are left.
 
  my @list = sql_flatten sql/SELECT * FROM mytable where x=$x/;
- # Result: @list = ('SELECT * FROM mytable where x=', \$x);
+ # OUTPUT: @list = ('SELECT * FROM mytable where x=', \$x);
 
-This function takes the same type of input as sql_interp, and in
-fact sql_interp uses it to preprocess input.  This function is
-typically only used internally by SQL::Interpolate.
+This function takes the same type of input as sql_interp, and, in
+fact, sql_interp uses it to preprocess input.  Typically, this
+function is only used internally by SQL::Interpolate.
 
 =back
 
-=head2 Exports and Use Parameters
+=head2 Exports and use parameters
 
 =over 4
 
@@ -747,6 +752,8 @@ sql_flatten, and sql_interp, sql_var.
 
 =head1 ADDITIONAL EXAMPLES
 
+These are more advanced examples.
+
 =head2 Preparing and reusing a statement handle
 
   my $sth;
@@ -769,7 +776,7 @@ handles.
   my($sql, @bind) = sql_interp "SELECT * FROM mytable WHERE",
       "x=", \$x, "AND y=", sql_var(\$y, SQL_VARCHAR), "AND z IN",
       sql_var([1, 2], SQL_INTEGER);
-  # Sets
+  # OUTPUT:
   #   @bind = ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
   #            [1, sql_var([1, 2], type => SQL_INTEGER)],
   #            [2, sql_var([1, 2], type => SQL_INTEGER)]);
@@ -795,125 +802,245 @@ DBIx::Interpolate provides a simpler way of handling bind_type.
       mass => sql_fragment('density *', \$volume, '+', \$extra)
       # note: sql_var(...) supported too
   };
-  # Result:
+  # OUTPUT:
   #   $sql = 'INSERT INTO mytable (density, time, mass) ' .
   #          'VALUES(?, CURRENT_TIMESTAMP(), density * ? + ?';
   #   @bind = ($density, $volume, $extra);
-  
-  ($sql, @bind) = sql_interp "INSERT INTO mytable", [
-      $density,
-      sql_literal("CURRENT_TIMESTAMP()"),
-      sql_fragment('density *', \$volume, '+', \$extra)
-  ];
-  # Result:
-  #   $sql = 'INSERT INTO mytable ' .
-  #          'VALUES(?, CURRENT_TIMESTAMP(), density * ? + ?';
 
 Note that scalars inside a hashref or arrayref are treated as binding
 variables not SQL literals.  The latter can be expressed using
 sql_literal().
-L<sql_fragment|SQL::Interpolate::Macro/item_sql_fragment> is a macro.
-
-=head1 LIMITATIONS / STATUS
-
-This module is still a bit under development, so interfaces could
-change some, particularly with respect to macros.  Robustness, good
-style, simplicity/generality, and good documentation are design goals.
-
-Be careful to reference the variables you interpolate to prevent SQL
-injection (see discussion in L</sql_interp>).
-
-The approach of this module does not guarantee that the generated SQL
-is valid for your particular database.  SQL::Interpolate does not
-parse most of the SQL input but just passes it through.  It is
-really the responsibility of the database to validate your SQL.  On
-the positive side, this module has no problem with many non-standard
-SQL constructs.  If in doubt, check the output of sql_interp yourself
-(such as by enabling the TRACE_SQL option).
-
-Some types of interpolation are context-sensitive and involve
-examination of your SQL fragments.  Often, the examination is simple
-and robust.  However, the examination could fail on obscure syntax.
-Look at the examples to see the types of interpolation that are
-accepted, and if doubt, examine the SQL output yourself or look at
-this module's source code.  If for whatever reason (let us know if you
-find an example), you you can disable context sensitivity by inserting
-a null-string before a variable.
-
-"AND"s could be made implicit at times, but this is not currently
-supported:
-
-  sql_interp "...WHERE", {x => 5}, 'AND', sql_or(...)
-  sql_interp "...WHERE", {x => 5}, sql_or(...) # could be made equivalent
-
-Some things are just not possible with the "WHERE \%hashref" syntax:
-
-  # bad--keys must be scalars and be unique
-  sql_interp "...WHERE",
-      {sql_var(\$x) => sql_literal('x'), y => $y, y => sql_literal('z')};
-  # ok
-  sql_interp "...WHERE", {x => $x, y => $y}, 'AND y = z';
+L<sql_fragment|SQL::Interpolate::Macro/sql_fragment> is a macro.
 
 =head1 DESIGN NOTES
 
-The core module (SQL::Interpolate) shouldn't try to do too much.--mark
+The section covers the design choices used in this module.
 
-Some distrust source filtering and fear it will cause bugs that are
-especially difficult to debug because "it's not perl anymore."  Source
-filtering is entirely optional, and off by default, in
-SQL::Interpolate.
+=head2 Philosophy and requirements
 
-It may be possible to avoid rerunning C<sql_interp> when only the
-binding variables change.  E.g. my($sql, $bindobj) = sql_interp(...);
-@bind = $bindobj->(x => 1); @bind = $bindobj->(x => 2).
-This is probably not necessary since the bottleneck is typically
-with the database rather than Perl.
+These principles have guided the design of SQL-Interpolate.
 
-It may be a bit inconsistent that a hashref in ("WHERE, \%hash)
-represents a logical AND-equal construction, while in ("INSERT INTO
-mytable", \%hash) the hashref represents pure data.  Moreover, the
-former can only represent a limited number of logical constructions,
-albeit common and useful ones in practice.  However, it is a natural
-"Do What I Mean" that a hashref in a WHERE clause represents a set of
-"AND"'ed clauses.  The hashref represents name-value pairs, and "AND"
-tends to be more common than "OR" in SQL.
+B<The core module (SQL::Interpolate) should be simple and not try to
+do too much>.  (Mark Stosberg) SQL-Interpolate has one central
+function, sql_interp, which is relatively simple and reusable in
+itself, and all other functionality is built upon it.  Complicated
+(macro) and less robust (source filtering) capabilities have been
+extracted out of the core module and into optional modules.  Source
+filtering, for example, is optional and off by default since many
+distrust source filtering and fear it will cause bugs that are
+especially difficult to debug because "it's not Perl anymore."
 
-Using an arrayref [x => $x, y => $y] rather than a hashref for the AND'ed
-construction could work just as well, and it allows duplicate keys and
-non-scalar keys.  However, SQL::Interpolate reserves [...] for future
-use.
+B<The bottleneck is the database rather than Perl>.  This module
+necessarily imposes I<some> overhead, largely due to the added string
+and regex processing.  The author has not quantified this overhead but
+expects it to be low compared to database concerns such as disk access
+and query processing and network concerns such as latency.  It may be
+possible to avoid rerunning C<sql_interp> when only the binding
+variables change (e.g. my($sql, $bindobj) = sql_interp(...); @bind =
+$bindobj->(x => 1); @bind = $bindobj->(x => 2)), but this is probably
+does not provide much benefit.
 
-It may be a bit inconsistent that scalars inside a hashref or arrayref
-are interpreted as binding variables rather than SQL literals as is
-the case outside.  The alternatives, ("WHERE", {x => \$x, y => \$y, z
-=> CURRENT_TIMESTAMP}), ("WHERE x IN", [\1, \2, \3]), or treating
-"double referencing" \\@colors as special, aren't pretty and don't
-satisfy the commonest case.  Representing embedded SQL literals via
-C<sql_literal()> is a compromise, and C<sql_literal()> and
-C<sql_var()> become duals.
+B<The query language is SQL>.  There are other modules (such as
+SQL::Abstract) that abstract the SQL language behind either
+object-oriented (OO) method calls and/or Perl data structures (hashes
+and arrays).  The former may be undesirable since it replaces one
+language with another and hides the full capabilities and
+expressiveness of your database's native SQL language.  The latter may
+load too much meaning into the syntax of "{, "[" and "\" thereby
+rendering the meaning less clear:
 
-SQL::Abstract can load too much meaning into "{, "[" and "\" so that
-the interpretation of a statement may not be visually clear.
+  SQL::Abstract example:
+  %where = (lname => {like => '%son%'},
+            age   => [-and => {'>=', 10}, {'<=', 20}])
+  Pure SQL:
+  "lname LIKE '%son' AND (age >= 10 AND age <= 20)"
+
+In contrast, SQL::Interpolate does not abstract away your SQL but
+rather makes it easier to interpolate Perl variables into your SQL.
+Now, SQL::Interpolate I<does> load some meaning into "{, "[" and "\",
+but we try to limit its use to obvious cases as justified below.
+Since your raw SQL is exposed, you can use your particular dialect of
+SQL, assuming the variable interpolation rules are relatively normal.
+Database independence is a worthy goal, but it can be quite difficult
+to achieve and is beyond the scope of SQL::Interpolate (though you
+might wish to build such features on-top-of SQL::Interpolate).
+
+B<Do-what-I-mean (DWIM) and satisfy the most common case.>  The syntax is
+intended to be natural and terse for the most common cases.  This is
+demonstrated in the examples.
+
+Now, it may be a bit inconsistent that a hashref has two meanings. The
+hashref in ("WHERE", \%hash) represents a logical AND-equal
+construction, whereas the hashref in ("INSERT INTO mytable", \%hash)
+and ("UPDATE mytable SET", \%hash) represents a tuple or portion of
+it.  However, there is little ambiguity since a swap of the two
+meanings results in illogical statements.  There is a limited number
+of plausible meanings and these constructions, and these two are the
+most common and useful ones in practice.  Admittedly, the former case
+might alternately be understood as an logical OR (rather than AND)
+construction, but it the AND construction is more common in a WHERE
+clause and a natural "Do What I Mean." (Similarly, a query "Perl
+MySQL" posed to a search engine usually implies "Perl AND MySQL" not
+"Perl OR MySQL.)  In the latter interpretation of \%hash, the hashref
+very well models a tuple that is more named rather than ordered.
+
+Using an arrayref [x => $x, y => $y] rather than a hashref for the
+AND'ed construction could work just as well, and it allows duplicate
+keys and non-scalar keys.  However, SQL::Interpolate reserves [...]
+for future use.  SQL::Interpolate interprets an arrayref
+inside a hashref such as {x => \@y, ...} as an "x IN y" construction.
+This was independently suggested by a number of people and unlikely
+to be confused with the "x = y" since and x and y have different
+dimensions (one is scalar and the other is a vector).
+
+It may be a bit inconsistent that scalars inside hashrefs and
+arrayrefs are interpreted as binding variables rather than SQL
+literals as is the case outside.
+
+  "WHERE", "x = ", \$x  # variables outside must be referenced
+  "WHERE", {x => $x}    # variables inside should not be referenced
+  "WHERE", [$x,$y]      # variables inside should not be referenced
+
+However, this not too much a stretch of logicality, and the
+alternatives are not pretty and do not satisfy the commonest case.
+Consider:
+
+  "WHERE", {x => \$x, y => \$y, z => 'CURRENT_TIMESTAMP'}
+  "WHERE x IN", [\1, \2, \3]
+  "WHERE x IN", \\@colors ("double referencing")
+
+Exceptions from the commonest case require C<sql_literal()>, which is
+the dual of C<sql_var()>.
+
+=head2 Limitations /  characteristics
+
+This module is still a bit under development, so interfaces could
+change some, particularly in the more esoteric features.  Still, it
+is expected you will find this module quite stable, robust, tested,
+simple, flexible, and well documented.
+
+If your new to this module, it's a good idea to examine the generated
+SQL (e.g. the TRACE_SQL option) to ensure you're getting what you
+think you're getting.  Be careful to reference the variables you
+interpolate to prevent SQL injection (see discussion in
+L</sql_interp>).
+
+This module does not parse your SQL fragments except to the extent
+required for variable interpolation, so it does not guarantee that the
+generated SQL is valid but leaves that responsibility to your
+database.  This is intentional so that it will works well even with
+non-standard SQL dialects.  Some types of interpolation are
+context-sensitive and involve examination of your SQL fragments.  The
+examination could fail on obscure syntax, but it is often simple and
+robust.  Look at the examples to see the types of interpolation that
+are accepted, and if doubt, examine the SQL output yourself (use
+Data::Dumper to examine the output of sql_interp or enable the
+TRACE_SQL option) or look at the source code of sql_interp.  If
+needed, you can disable context sensitivity by inserting a null-string
+before a variable.
+
+A few things are just not possible with the ("WHERE, \%hashref)
+syntax, so in such case, use a more direct syntax:
+
+  # ok--direct syntax
+  sql_interp "...WHERE", {x => $x, y => $y}, 'AND y = z';
+  # bad--trying to impose a hashref but keys must be scalars and be unique
+  sql_interp "...WHERE",
+      {sql_var(\$x) => sql_literal('x'), y => $y, y => sql_literal('z')};
+
+=head2 Proposed enhancements
+
+The following enhancements to SQL::Interpolate have been proposed.
+The most important suggestions are listed at top, and some
+suggestions could be rejected.
+
+A tutorial could be useful. (Wojciech)
+
+sql_interp({bla => undef}) should probably return
+("bla is NULL", ()) (slaven).  http://rt.cpan.org/NoAuth/Bug.html?id=11810
+
+The following additional type of insert might be supported (markt):
+
+  sql_interp("INSERT INTO temp (id,val) VALUES", [1,2])
+
+It might be useful to interpret hashrefs as tuples when
+following a SELECT (markt):
+
+  'INSERT INTO mytable SELECT', {name => sql_literal('table.col'), me => 24}
+  ==> 'INSERT INTO mytable SELECT table.col as name, ? as me', 24
+similar to
+  'INSERT INTO mytable', {name => sql_literal('CURRENT_TIMESTAMP()'), me => 24}
+Also 'SELECT', [$x, $y, $z]).
+
+Multiple row inserts were suggested (markt) as supported on MySQL
+and DB2 (any other databases?).  It is not certain that
+the syntax is sufficiently clear or common:
+
+  "INSERT INTO mytable", [[1,2], [3,4]] (and other variations)
+  "INSERT INTO mytable", {x => 2}, [2]  (?)
+
+"AND"s might be made implicit such that the following statements
+become equivalent.  This may not be necessary.
+
+  sql_interp "...WHERE", {x => 5}, 'AND', sql_or(...)
+  sql_interp "...WHERE", {x => 5}, sql_or(...)
+
+Named placeholders might be supported (possibly via sql_var()):
+
+  "SELECT * FROM mytable WHERE",
+    "x=", sql_var("color"), "and", {val => sql_var("weight")},
+    sql_val(weight => 100), sql_val(color => 'blue')
+
+sql_and and sql_or macros might support hashrefs as well (the former
+for clarity and the latter for terseness):
+
+  "SELECT * FROM mytable WHERE", {x => 2, y => 5}
+  "SELECT * FROM mytable WHERE", sql_and {x => 2, y => 5} # same as above
+  "SELECT * FROM mytable WHERE", sql_or {x => 2, y => 5}
+
+Logical operations might be supported as follows.  This might be rejected
+due to unintuitive syntax.
+
+  "SELECT * FROM mytable WHERE", {
+    x => sql_not(2),   # x <> 2
+    y => 5
+  }
+ "SELECT * FROM mytable WHERE", sql_or { # might be difficult to read
+   x => sql_or(2, 3, sql_and(4, 5)),
+   y => 5
+ }
+
+Support for tuples (e.g. MySQL) might be added, but this is probably too
+uncommon to be worthwhile to implement:
+
+  SELECT * FROM edge WHERE", {"(sid, did)" => [5, 1]}  # equals
+  SELECT * FROM edge WHERE", {"(sid, did)" => [[5, 1], [2, 3]]} # IN
+
+Can recursive sql_interp cause problems?
+
+=head2 Implementation notes
+
+Oracle (unlike MySQL) does not allow 'WHERE id = 5 and 1' nor
+'WHERE id = 5 or 0'.  SQL::Interpolate therefore generates the more
+portable 'WHERE id = 5 and 1=1' and 'WHERE id = 5 or 1=0'.
 
 =head1 CONTRIBUTORS
 
-David Manura (L<http://math2.org/david/contact>)--author.
-
-Feedback incorporated from
-
-* Mark Stosberg (L<http://mark.stosberg.com/>)
-- who recommended keeping the core module simple, simplified the docs,
-and provided a bunch of other highly useful feedback.
-
-* Terrence Brannon
-- early feedback
+David Manura (L<http://math2.org/david/contact>) (author).
+Feedback incorporated from Mark Stosberg
+(L<http://mark.stosberg.com/>) (recommended simplifying the code
+module, simplified the docs, and provided a bunch of other highly
+useful feedback), Mark Tiefenbruck, Wojciech Pietron (Oracle compat),
+Jim Chromie (DBIx::Interpolate idea), Juerd Waalboer, Terrence Brannon
+(early feedback), and others.
 
 =head1 FEEDBACK
 
 Bug reports and comments on the design are most welcome.  rt.cpan.org
-can be used for specific bug reporting, but you may also contact
-me directly (L<http://math2.org/david/contact>).  See also the project
-page at L<http://math2.org/sql_interpolate>.
+can be used for specific bug reporting, but you may also use the
+discussion list (L<http://www.cpanforum.com/dist/SQL-Interpolate>) or
+contact me directly (L<http://math2.org/david/contact>).  See also the
+project page at L<http://math2.org/sql_interpolate>.
 
 =head1 LEGAL
 
@@ -928,7 +1055,7 @@ See L<http://www.perl.com/perl/misc/Artistic.html>.
 
 L<DBIx::Interpolate|DBIx::Interpolate> extends this module slightly,
 allowing certain DBI methods to accept an C<sql_interp>-like
-parameter list rather than the traditional ($statement, \%attr,
+interpolation list rather than the traditional ($statement, \%attr,
 @bind_values)-like parameter list.
 
 L<SQL::Interpolate::Filter|SQL::Interpolate::Filter> streamlines the
@@ -939,18 +1066,18 @@ L<SQL::Interpolate::Macro|SQL::Interpolate::Macro> provides an
 assortment of macros and SQL filters, which allow you to write
 simpler, more robust, and possibly more portable queries.
 
-=head2 Related Modules
+=head2 Related modules
 
 L<SQL::Abstract|SQL::Abstract> shares with C<SQL::Interpolate> the
 purpose of making SQL generation easier. SQL::Abstract differs in that
-it expresses queries in terms of OO method calls. It's syntax can be
-hard to read because it uses the subtle difference between a brace and
-bracket to denote the difference between AND and OR in a query. To
-worsen the situation, the user can change whether a bracket implies
-"AND" or "OR". Some complex where clauses are difficult or impossible
-with L<SQL::Abstract|SQL::Abstract>.  SQL::Interpolate gives the
-author more direct access to the underlying SQL.  This permits using
-the full expressivity of the database query language.
+it expresses queries in terms of OO method calls. It's syntax may
+impair readability because it uses the subtle difference between a
+brace and bracket to denote the difference between AND and OR in a
+query (the user can change whether a bracket implies "AND" or
+"OR"). Some complex where clauses are difficult or impossible with
+L<SQL::Abstract|SQL::Abstract>.  SQL::Interpolate gives the author
+more direct access to the underlying SQL.  This permits using the full
+expressivity of the database query language.
 
 L<DBIx::Simple|DBIx::Simple> strives to simplify SQL generation as
 well as the data structures returned from
@@ -966,7 +1093,7 @@ called L<Class::DBI::AbstractSearch|Class::DBI::AbstractSearch> that
 allows it to use C<SQL::Abstract> to generate SQL. It's possible that
 C<SQL::Interpolate> could be integrated with it as well.
 
-=head2 Related Resources
+=head2 Related resources
 
 SQL Interpolate Project Page: L<http://math2.org/sql_interpolate> .
 

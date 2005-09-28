@@ -1,8 +1,20 @@
+# Tests of SQL::Interpolate
+#
+# Note: Perl does not define an ordering on hash keys, so these tests
+# take care not to assume a particular order (e.g. see $h_keys and $h_values)
+
 use strict;
 use Test::More 'no_plan';
 use Data::Dumper;
 use SQL::Interpolate qw(:all);
 use SQL::Interpolate::Macro qw(:all);
+BEGIN {require 't/lib.pl';}
+
+# test of use parameters
+BEGIN {
+    use_ok('SQL::Interpolate',
+        ':all', TRACE_SQL => 0, TRACE_FILTER => 0, FILTER => 0); # 0.3
+}
 
 my $interp = new SQL::Interpolate;
 my $sql_interp = $interp->make_sql_interp();
@@ -14,8 +26,16 @@ my $v0 = [];
 my $v = ['one', 'two'];
 my $v2 = ['one', sql_literal('two')];
 my $h0 = {};
+
 my $h = {one => 1, two => 2};
+my $h_keys   = [keys %$h];
+my $h_values = [values %$h];
+
 my $h2 = {one => 1, two => sql_literal('three')};
+my $h2_keys   = [keys %$h2];
+my $h2_values = [values %$h2];
+my $h2_places = [map {$_ eq 'one' ? '?' : 'three'} @$h2_keys];
+
 my $var1 = sql_var(\$x);
 my $var2 = sql_var(\$x, type => 1);
 
@@ -44,10 +64,10 @@ interp_test(['INSERT INTO mytable', $h0],
             ['INSERT INTO mytable () VALUES()'],
             'INSERT hashref of size = 0');
 interp_test(['INSERT INTO mytable', $h],
-            ['INSERT INTO mytable (one, two) VALUES(?, ?)', 1, 2],
+            ["INSERT INTO mytable ($h_keys->[0], $h_keys->[1]) VALUES(?, ?)", @$h_values],
             'INSERT hashref of size > 0');
 interp_test(['INSERT INTO mytable', $h2],
-            ['INSERT INTO mytable (one, two) VALUES(?, three)', 1],
+            ["INSERT INTO mytable ($h2_keys->[0], $h2_keys->[1]) VALUES($h2_places->[0], $h2_places->[1])", 1],
             'INSERT hashref of size > 0 with sql_literal');
 interp_test(['INSERT INTO mytable',
                 {one => 1, two => $var2, three => sql_literal('3')}],
@@ -71,7 +91,7 @@ interp_test(['WHERE field IN', sql_literal($x)],
             ["WHERE field IN $x"], # invalid
             'IN sql_literal');
 interp_test(['WHERE field IN', $v0],
-            ['WHERE 1'],
+            ['WHERE 1=1'],
             'IN arrayref of size = 0');
 interp_test(['WHERE field IN', $v],
             ['WHERE field IN (?, ?)', @$v],
@@ -82,11 +102,19 @@ interp_test(['WHERE field IN', $v2],
 interp_test(['WHERE field IN', [1, sql_fragment(\$x, '*', \$x)]],
             ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
             'IN arrayref with macro');
-
+interp_test(['WHERE', {field => $v}],
+            ['WHERE field IN (?, ?)', 'one', 'two'],
+            'hashref with arrayref');
+interp_test(['WHERE', {field => $v0}],
+            ['WHERE 1=1'],
+            'hashref with arrayref of size = 0');
+interp_test(['WHERE', {field => [1, sql_fragment(\$x, '*', \$x)]}],
+            ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
+            'hashref with arrayref with macro');
 
 # SET
 interp_test(['UPDATE mytable SET', $h],
-            ['UPDATE mytable SET one=?, two=?', 1, 2],
+            ["UPDATE mytable SET $h_keys->[0]=?, $h_keys->[1]=?", @$h_values],
             'SET hashref');
 interp_test(['UPDATE mytable SET',
                 {one => 1, two => $var2, three => sql_literal('3')}],
@@ -97,10 +125,10 @@ interp_test(['UPDATE mytable SET',
 
 # WHERE hashref
 interp_test(['WHERE', $h0],
-            ['WHERE 1'],
+            ['WHERE 1=1'],
             'WHERE hashref of size = 0');
 interp_test(['WHERE', $h],
-            ['WHERE (one=? AND two=?)', 1, 2],
+            ["WHERE ($h_keys->[0]=? AND $h_keys->[1]=?)", @$h_values],
             'WHERE hashref of size > 0');
 interp_test(['WHERE', {x => 1, y=>sql_literal('2')}],
             ['WHERE (y=2 AND x=?)', 1],
@@ -125,6 +153,13 @@ interp_test(['WHERE', {x => $x, y => $var2}, 'AND z=', \$x],
             ['WHERE (y= ? AND x=?) AND z= ?',
                 [${$var2->{value}}, $var2], [$x, sql_var(\$x)], [$x, sql_var(\$x)]],
             'WHERE hashref of \$x, sql_var typed');
+my $h5 = {x => $x, y => [3, $var2]};
+my $h5_keys = [keys %$h5];
+my $h5_places = [map {$_ eq 'x' ? 'x=?' : 'y IN (?,  ?)'} @$h5_keys];
+my $h5_values = [map {$_ eq 'x' ? [$x, sql_var(\$x)] : ([3, sql_var(\3)], [${$var2->{value}}, $var2])} @$h5_keys];
+interp_test(['WHERE', $h5],
+            ["WHERE ($h5_places->[0] AND $h5_places->[1])", @$h5_values],
+            'WHERE hashref of arrayref of sql_var typed');
 interp_test(['WHERE', {x => $x, y => sql_literal('z')}],
             ['WHERE (y=z AND x=?)', $x],
             'WHERE hashref of \$x, sql_literal');
@@ -137,10 +172,20 @@ sub interp_test
 {
     my($snips, $expect, $name) = @_;
 #    print Dumper([sql_interp @$snips], $expect);
-    is_deeply([sql_interp @$snips], $expect, $name);
-    is_deeply([$interp->sql_interp(@$snips)], $expect, "$name OO");
-    is_deeply([$sql_interp->(@$snips)], $expect, "$name closure");
-    is_deeply([$sql_interp2->(@$snips)], $expect, "$name closure2");
+
+    # custom filter
+    my $func = sub { return [@_]; };
+    my $test = \&my_deeply;
+    if(ref($expect) eq 'ARRAY' && @$expect > 0 && ref($expect->[0]) eq 'CODE') {
+        $func = shift @$expect;
+        $expect = $expect->[0];
+        $test = \&like;
+    }
+
+    $test->($func->(sql_interp @$snips), $expect, $name);
+    $test->($func->($interp->sql_interp(@$snips)), $expect, "$name OO");
+    $test->($func->($sql_interp->(@$snips)), $expect, "$name closure");
+    $test->($func->($sql_interp2->(@$snips)), $expect, "$name closure2");
 }
 
 sub error_test

@@ -1,5 +1,4 @@
 # Test manipulating sql// objects.
-
 use strict;
 BEGIN {require 't/lib.pl';}
 use Test::More 'no_plan';

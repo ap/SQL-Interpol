@@ -1,8 +1,9 @@
 package SQL::Interpolate::Macro;
 use strict;
 use base qw(Exporter);
+use SQL::Interpolate; # for $VERSION
 
-our $VERSION = "0.30";
+our $VERSION = $SQL::Interpolate::VERSION;
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
     relations
@@ -195,7 +196,7 @@ sub expand
         my $relation = $filter->{relations}->{$relation_name};
         my $name_re = $relation->{name};
 
-        if($name =~ /^($name_re)$/s) {
+        if($name =~ /($name_re)/s) {
             my($name, $name1, $name2) = ($1, $2, $3);
 
             $keys->{$name1} = "$name.$relation->{key}->[0]";
@@ -241,7 +242,7 @@ sub expand
         done_param:
         for my $relation (values %{$filter->{relations}}) {
             my $name_re = $relation->{name};
-            if($param =~ /^($name_re)/gs) {
+            if($param =~ /($name_re)/gs) {
                 my($name, $name1, $name2) = ($1, $2, $3);
                 $param = [$name, [$name1, defined($name2) ? $name2 : ()], $relation];
                 $match = 1;
@@ -338,7 +339,7 @@ sub new
 sub expand
 {
     my($self, $interp, $filter) = @_;
-    if(@$self == 0) { return '1'; } # trivial case
+    if(@$self == 0) { return '1=1'; } # trivial case
     else {
         my @out = map {('AND',
             ref($_) eq '' || UNIVERSAL::isa($_, 'SQL::Interpolate::Macro') ?
@@ -368,7 +369,7 @@ sub new
 sub expand
 {
     my($self, $interp, $filter) = @_;
-    if(@$self == 0) { return '0'; } # trivial case
+    if(@$self == 0) { return '1=0'; } # trivial case
     else {
         my @out = map {('OR',
             ref($_) eq '' || UNIVERSAL::isa($_, 'SQL::Interpolate::Macro') ?
@@ -445,19 +446,34 @@ SQL::Interpolate::Macro - Macros and SQL filters for SQL::Interpolate
 
 =head1 DESCRIPTION
 
+
+=head3 Macros
+
 This module provides an assortment of macros and SQL filters for
 SQL::Interpolate.  These allow you to write simpler, more robust, and
 possibly more portable queries.  You can also write your own macros
 and filters.
 
-I<Macros> are objects derived from SQL::Interpolate::Macro.  They can
-be inserted into the interpolation list passed to sql_interp().
-sql_interp() internally calls sql_flatten(), which expands
-any macros to ordinary strings and variable references, which
-can then be interpolated directly.  Strings may even contain
-I<stringified macros> (e.g. "WHERE LINK(AB,BC) AND x=y"), which will be
-broken down as well (e.g. "WHERE ", link('AB','BC'), " AND x=y")
-and then flattened recursively.
+Macros are objects derived from SQL::Interpolate::Macro, and they
+expand to ordinary string and variable reference interpolation
+elements before processing.  Macros may also exist as a convenience as
+"stringified macros" within strings; these are converted into real
+macro objects before processing (e.g. "WHERE LINK(AB,BC) AND x=y" ==>
+"WHERE ", link('AB','BC'), " AND x=y").  Also, if enabled, source
+filtering internally converts sql// quotes into macro objects.
+
+Macro expansion is performed by the C<sql_flatten> function.  This
+converts stringified macros into real macro objects and expands macro
+objects into other interpolation elements (strings, variable
+references, and macro objects).  The process can be recursive since
+the expansion of a macro may contain other macros (e.g. nested
+macros).
+
+The transformation process contains a number of extension hooks where
+the client may insert code to transform the interpolation list and/or
+the final $sql string.  Refer to
+L<SQL::Interpolate::Macro|SQL::Interpolate::Macro> for details on
+macros.
 
 An I<SQL filter> is an object derived from
 SQL::Interpolate::SQLFilter.  SQL filters can be used by
@@ -494,14 +510,14 @@ Normally, this would be expanded to
 
  "(", "x=2 AND", $conditions[0], 'AND', $conditions[1], 'AND', ...., ")"
 
-Now, what if @condition == 0?  If we define
+Now, what if @conditions == 0?  If we define
 
- sql_and()  -->  "1"         # analogous to x0 = 1
- sql_or()   -->  "0"         # analogous to x*0 = 0
+ sql_and()  -->  "1=1"         # analogous to x^0 = 1
+ sql_or()   -->  "1=0"         # analogous to x*0 = 0
 
 then proper SQL is generated in the above case:
 
- "x=2 AND", "1"
+ "x=2 AND", "1=1"
  # equivalent to "x=2"
 
 =head2 Built-in Macros and Filters
@@ -656,9 +672,9 @@ This allows one to write
 
   my $dbx = new DBIx::Interpolate(
       relations(
-          sales_order      => {name => qr/([S-T])/, key => ['so_nbr']},
-          part             => {name => qr/([p-r])/, key => ['part_nbr']},
-          sales_order_line => {name => qr/([S-T])([p-r])/,
+          sales_order      => {name => qr/^([S-T])$/, key => ['so_nbr']},
+          part             => {name => qr/^([p-r])$/, key => ['part_nbr']},
+          sales_order_line => {name => qr/^([S-T])([p-r])$/,
                            key => ['so_nbr', 'part_nbr']}
   ));
   
@@ -733,7 +749,7 @@ other (subcomponent) parts.
 
  relations(...
      part_part => {
-         name => qr/([p-r])([p-r])/, key => ['part_nbr1', 'part_nbr2']}
+         name => qr/^([p-r])([p-r])$/, key => ['part_nbr1', 'part_nbr2']}
  )
 
 Now, it is possible to use two entities in the same class in the same
@@ -773,8 +789,8 @@ SQL::Interpolate::SQLFilter.
 Sets information on relations (tables) for this objects.
 
  relations({
-    messageset => {name => qr/[A-Z]/, key => 'msid'},
-    message    => {name => qr/[m-p]/, key => 'mid'},
+    messageset => {name => qr/^[A-Z]$/, key => 'msid'},
+    message    => {name => qr/^[m-p]$/, key => 'mid'},
     messageset_message => {foreign => {
        msid => 'messageset',
        mid  => 'message'
@@ -835,10 +851,10 @@ Generates
 
   ('((x=y) AND (y=z or z=w) AND (z=?))', 3)
 
-If the @predicates list is empty, a '1' is returned.
+If the @predicates list is empty, a '1=1' is returned.
 
   ($sql, @bind) = sql_interp 'x=y AND', sql_and(@predicates);
-  # Result: $sql = 'x=y AND 1';
+  # Result: $sql = 'x=y AND 1=1';
 
 Predicates are surrounded by parenthesis if possibly needed.
 
@@ -855,10 +871,10 @@ Generates
 
   ('(x=y OR y=z OR 'z=?)', 3)
 
-If the @predicates list is empty, a '0' is returned.
+If the @predicates list is empty, a '1=0' is returned.
 
   ($sql, @bind) = sql_interp 'x=y OR', sql_or(@predicates);
-  # Generates $sql = 'x=y OR 0';
+  # Generates $sql = 'x=y OR 1=0';
 
 Predicates are surrounded by parenthesis if possibly needed.
 
@@ -899,7 +915,7 @@ value if the condition is true, else if expands to the empty list ().
   #   q[(color = "blue" AND shape = ?)], $shape
   #   q[(color = "blue")]
   #   q[(shape = ?)], $shape
-  #   1
+  #   1=1, $shape
 
 sql_if is similar to
 
@@ -1067,7 +1083,6 @@ than obscure and when they improve robustness and simplicity of the syntax.
 =head1 CONTRIBUTORS
 
 David Manura (http://math2.org/david)--author.
-
 Feedback incorporated from Mark Stosberg on table linking, SQL LIMIT,
 and things.
 
@@ -1090,7 +1105,7 @@ Full example code of automatic table linking - Meset::MessageBoard in Meset
 
 Dependencies: L<DBI|DBI>.
 
-Related: L<SQL::Abstract|SQL::Abstract>,
+Related modules: L<SQL::Abstract|SQL::Abstract>,
 L<DBIx::Abstract|DBIx::Abstract>,
 L<Class::DBI|Class::DBI>.
 

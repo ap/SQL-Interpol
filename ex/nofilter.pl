@@ -11,22 +11,22 @@ my($sql, @bind) = sql_interp qq[
     SELECT * FROM table
     WHERE color IN], \@colors, qq[
           AND y = ], \$x,
-    &limit(start => 1, count => 10)
+    "LIMIT", \10, "OFFSET", \0
 ;
 print "$sql\n" . Dumper(\@bind);
 
-my @colors = ();
-my($sql, @bind) = sql_interp qq[
+@colors = ();
+($sql, @bind) = sql_interp qq[
     SELECT * FROM table
     WHERE color IN], \@colors, qq[
           AND y = ], \$x,
-    &limit(start => 1, count => 10)
+    "LIMIT", \10, "OFFSET", \0
 ;
 print "$sql\n" . Dumper(\@bind);
 
 my $new_color = 'red';
 my $new_shape = 'square';
-my($sql, @bind) = sql_interp qq[
+($sql, @bind) = sql_interp qq[
     INSERT INTO table ], {
         color => $new_color,
         shape => $new_shape}
@@ -34,7 +34,7 @@ my($sql, @bind) = sql_interp qq[
 print "$sql\n" . Dumper(\@bind);
 
 my $color = 'yellow';
-my($sql, @bind) = sql_interp qq[
+($sql, @bind) = sql_interp qq[
     UPDATE table SET ], {
         color => $new_color,
         shape => $new_shape}, qq[

@@ -8,12 +8,12 @@ use SQL::Interpolate::Macro qw(:all); #FIX--OK interface?
 our $fake_mysql_dbh;
 
 my $interp = new SQL::Interpolate(relations({
-    messageset => {name => qr/([A-Z])/, key => ['msid']},
-    message    => {name => qr/([m-p])/, key => ['mid']},
+    messageset => {name => qr/^([A-Z])$/, key => ['msid']},
+    message    => {name => qr/^([m-p])$/, key => ['mid']},
     messageset_message => {
-        name => qr/([A-Z])([m-p])/, key => ['msid', 'mid']},
+        name => qr/^([A-Z])([m-p])$/, key => ['msid', 'mid']},
     messageset_messageset => {
-        name => qr/([A-Z])([A-Z])/, key => ['msid_1', 'msid_2']}
+        name => qr/^([A-Z])([A-Z])$/, key => ['msid_1', 'msid_2']}
 }));
 
 # paren()
@@ -31,7 +31,7 @@ my $interp = new SQL::Interpolate(relations({
 );
 &flatten_test(
     [sql_and],
-    ['1'],
+    ['1=1'],
     'and size = 0'
 );
 
@@ -43,14 +43,14 @@ my $interp = new SQL::Interpolate(relations({
 );
 &flatten_test(
     [sql_or],
-    ['0'],
+    ['1=0'],
     'or size = 0'
 );
 
 # or/and()
 &flatten_test(
     [sql_or sql_and('x=y', \5), sql_and()],
-    ['(', '(', '(', '(', 'x=y', ')', 'AND', \5, ')', ')', 'OR', '(', '1', ')', ')'],
+    ['(', '(', '(', '(', 'x=y', ')', 'AND', \5, ')', ')', 'OR', '(', '1=1', ')', ')'],
     'or/and'
 );
 

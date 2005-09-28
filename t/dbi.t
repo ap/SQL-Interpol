@@ -18,6 +18,12 @@ my @result1 = (['color', 'size'], @data1);
 my $x = 5;
 my $y = 6;
 
+# test of use parameter inheritance
+BEGIN {
+    use_ok('DBIx::Interpolate',
+        'dbi_interp', 'sql_interp', TRACE_SQL => 0); # 0.3
+}
+
 # selectall_arrayref
 $dbh->{mock_add_resultset} = \@result1;
 is_deeply(
@@ -93,17 +99,23 @@ is_deeply($stx->sth()->{mock_params}, [4, 5, 6, 7]);
 
 is(scalar(keys %{$stx->sths()}), 2, 'two sths in stx still');
 
+my $h2 = {a => 1, b => 2};
+my $h2_keys = [keys %$h2];
+my $h2_values = [values %$h2];
 
 # bind_param
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
 $dbx->selectall_arrayref("SELECT * FROM mytable WHERE x=", \$x,
     "AND y=", sql_var(\$y, type => SQL_INTEGER),
-    "AND", sql_var({a => 1, b => 2}, type => SQL_DATETIME),
+    "AND", sql_var($h2, type => SQL_DATETIME),
     "AND x IN", sql_var([4, 5], type => SQL_VARCHAR)
 );
-is($dbh->{mock_all_history}->[0]{statement},
-    'SELECT * FROM mytable WHERE x= ? AND y= ? AND (a=? AND b=?) AND x IN (?, ?)'
+is_deeply(
+    $dbh->{mock_all_history}->[0]{statement},
+    "SELECT * FROM mytable WHERE x= ? AND y= ? AND " .
+    "($h2_keys->[0]=? AND $h2_keys->[1]=?) AND x IN (?, ?)"
 );
 # note: DBD::Mock doesn't save bind param type to test?
+
 

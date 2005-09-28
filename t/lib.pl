@@ -23,5 +23,15 @@ sub sql_str
     return $out;
 }
 
+# modified version of is_deeply
+sub my_deeply
+{
+    # prevent warning "Argument \"...\" isn't numeric in numeric eq (==)"
+    # caused by some problem in old versions of Test::More.
+    local $SIG{__WARN__} = sub {
+        warn $_[0] if $_[0] !~ /isn't numeric in numeric eq/;
+    };
+    is_deeply(@_);
+}
 
 1
