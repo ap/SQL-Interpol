@@ -5,9 +5,7 @@ use Data::Dumper;
 use SQL::Interpolate qw(:all);
 use SQL::Interpolate::Macro qw(:all); #FIX--OK interface?
 
-our $fake_mysql_dbh;
-
-my $interp = new SQL::Interpolate(relations({
+my $interp = new SQL::Interpolate(sql_rel_filter({
     messageset => {name => qr/^([A-Z])$/, key => ['msid']},
     message    => {name => qr/^([m-p])$/, key => ['mid']},
     messageset_message => {
@@ -25,8 +23,8 @@ my $interp = new SQL::Interpolate(relations({
 
 # and()
 &flatten_test(
-    [sql_and 'x=y', \5, sql_fragment('z=', \2)],
-    ['(', '(', 'x=y', ')', 'AND', \5, 'AND', '(', 'z=', \2, ')', ')'],
+    [sql_and 'x=y', \5, sql('z=', \2)],
+    ['(', '(', 'x=y', ')', 'AND', '(', \5, ')', 'AND', '(', 'z=', \2, ')', ')'],
     'and size > 0'
 );
 &flatten_test(
@@ -34,11 +32,16 @@ my $interp = new SQL::Interpolate(relations({
     ['1=1'],
     'and size = 0'
 );
+&flatten_test(  # fails in 0.31
+    [sql_and sql],
+    ['1=1'],
+    'and sql() size = 0'
+);
 
 # or()
 &flatten_test(
-    [sql_or 'x=y', \5, sql_fragment('z=', \2)],
-    ['(', '(', 'x=y', ')', 'OR', \5, 'OR', '(', 'z=', \2, ')', ')'],
+    [sql_or 'x=y', \5, sql('z=', \2)],
+    ['(', '(', 'x=y', ')', 'OR', '(', \5, ')', 'OR', '(', 'z=', \2, ')', ')'],
     'or size > 0'
 );
 &flatten_test(
@@ -46,11 +49,16 @@ my $interp = new SQL::Interpolate(relations({
     ['1=0'],
     'or size = 0'
 );
+&flatten_test(  # fails in 0.31
+    [sql_or sql],
+    ['1=0'],
+    'or sql() size = 0'
+);
 
 # or/and()
 &flatten_test(
     [sql_or sql_and('x=y', \5), sql_and()],
-    ['(', '(', '(', '(', 'x=y', ')', 'AND', \5, ')', ')', 'OR', '(', '1=1', ')', ')'],
+    ['(', '(', '(', '(', 'x=y', ')', 'AND', '(', \5, ')', ')', ')', 'OR', '(', '1=1', ')', ')'],
     'or/and'
 );
 
@@ -125,14 +133,14 @@ sub flatten_test
 {
     my($snips, $expect, $name) = @_;
 
-    is_deeply([sql_flatten @$snips], $expect, $name);
+    my_deeply([sql_flatten @$snips], $expect, $name);
 }
 
 
 
 #FIX--broken test
 #$interp = new SQL::Interpolate();
-#$interp->relations({
+#$interp->sql_rel_filter({
 #    sales_order => {name => qr/([S-T])/, key => ['so_nbr']},
 #    part => {name => qr/([p-r])/, key => ['part_nbr']},
 #    sales_order_line => {
@@ -147,7 +155,7 @@ sub flatten_test
 sub filter_sql_test
 {
     my($interp, $input, $expect, $name) = @_;
-    is_deeply($interp->filter_sql($input), $expect, $name);
+    my_deeply($interp->filter_sql($input), $expect, $name);
 }
 
 
@@ -156,7 +164,8 @@ sub filter_sql_test
 sub rel_test
 {
     my($snips, $expect, $name) = @_;
-    is_deeply($interp->sql_interp(@$snips), $expect, $name);
+
+    my_deeply($interp->sql_interp(@$snips), $expect, $name);
 }
 
 
@@ -166,7 +175,7 @@ sub rel_test
 
 
 # IMPROVE--handle cases like this
-#$interp->relations({
+#$interp->sql_rel_filter({
 #    messageset => {name => qr/([A-Z])/, key => [msid => undef]},
 #    message    => {name => qr/([m-p])/, key => [mid  => undef]},
 #    user       => {name => qr/([u-z])/, key => [uid  => undef]},

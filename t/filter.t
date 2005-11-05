@@ -5,8 +5,6 @@ use Test::More 'no_plan';
 use Data::Dumper;
 use SQL::Interpolate FILTER => 1, qw(:all);
 
-our $fake_mysql_dbh;
-
 my $x = 5;
 my @v = ('one', 'two');
 my $v = \@v;

@@ -3,9 +3,11 @@
 
 use strict;
 use SQL::Interpolate qw(:all);
+use SQL::Interpolate::Macro qw(sql_flatten);
+use Data::Dumper;
 
-our $fake_mysql_dbh =
-    bless {Driver => {Name => 'mysql'}}, 'DBI::db';
+#our $fake_mysql_dbh =
+#    bless {Driver => {Name => 'mysql'}}, 'DBI::db';
 
 # Return normalized string representation of SQL interpolation list.
 sub sql_str
@@ -31,7 +33,7 @@ sub my_deeply
     local $SIG{__WARN__} = sub {
         warn $_[0] if $_[0] !~ /isn't numeric in numeric eq/;
     };
-    is_deeply(@_);
+    is_deeply(@_) or print STDERR Dumper(@_);
 }
 
 1

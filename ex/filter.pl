@@ -26,7 +26,6 @@ my $dbx = DBIx::Interpolate->connect(
     "dbi:SQLite:dbname=test.sqlt", "", "",
     {RaiseError => 1, AutoCommit => 1}
 );
-
 $dbx->do( sql[CREATE TABLE mytable(one INTEGER PRIMARY KEY, two INTEGER)] );
 #die Dumper(sql[INSERT INTO mytable one => $n, two => $n+1]);
 for(my $n=0; $n<5; $n++) {

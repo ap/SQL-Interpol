@@ -24,28 +24,61 @@ my $x = 5;
 my $y = 6;
 my $v0 = [];
 my $v = ['one', 'two'];
-my $v2 = ['one', sql_literal('two')];
+my $v2 = ['one', sql('two')];
 my $h0 = {};
 
 my $h = {one => 1, two => 2};
 my $h_keys   = [keys %$h];
 my $h_values = [values %$h];
 
-my $h2 = {one => 1, two => sql_literal('three')};
-my $h2_keys   = [keys %$h2];
-my $h2_values = [values %$h2];
-my $h2_places = [map {$_ eq 'one' ? '?' : 'three'} @$h2_keys];
-
 my $var1 = sql_var(\$x);
 my $var2 = sql_var(\$x, type => 1);
+
+my $h2 = {one => 1, two => $var2, three => sql('3')};
+my $h2_keys   = [keys %$h2];
+my $h2_values = [values %$h2];
+my $h2_places = [map {$_ eq 'three' ? '3' : '?'} @$h2_keys];
+my $h2_values2 = [map {
+    $_ eq 'one' ? [1, sql_var(\1)] :
+    $_ eq 'two' ? [${$var2->{value}}, $var2] : die
+} grep {$_ ne 'three'} @$h2_keys];
+
+#== trivial cases
+interp_test([],
+            [''],
+            'empty');
+interp_test(['SELECT * FROM mytable'],
+            ['SELECT * FROM mytable'],
+            'string');
+interp_test([\$x],
+            [' ?', $x],
+            'scalarref');
+interp_test([sql()],
+            [''],
+            'sql()');
+
+# improve: call with with macros disabled
+interp_test([SQL::Interpolate::SQL->new(\$x)],
+            [' ?', $x],
+            'SQL::Interpolate::SQL->new(scalarref)');
+
+interp_test([sql('test')],
+            ['test'],
+            'sql(string))');
+interp_test([sql(sql(\$x))],
+            [' ?', $x],
+            'sql(sql(scalarref))');
+interp_test([sql(sql(),sql())],
+            [''],
+            'sql(sql(),sql())');
 
 #== INSERT
 interp_test(['INSERT INTO mytable', \$x],
             ['INSERT INTO mytable VALUES(?)', $x],
             'INSERT scalarref');
-interp_test(['INSERT INTO mytable', sql_literal($x)],
+interp_test(['INSERT INTO mytable', sql($x)],
             ["INSERT INTO mytable $x"], # invalid
-            'INSERT sql_literal');
+            'INSERT sql(...)');
 # OK in mysql
 interp_test(['INSERT INTO mytable', $v0],
             ['INSERT INTO mytable VALUES()'],
@@ -55,8 +88,8 @@ interp_test(['INSERT INTO mytable', $v],
             'INSERT arrayref of size > 0');
 interp_test(['INSERT INTO mytable', $v2],
             ['INSERT INTO mytable VALUES(?, two)', 'one'],
-            'INSERT arrayref of size > 0 with sql_literal');
-interp_test(['INSERT INTO mytable', [1, sql_fragment(\$x, '*', \$x)]],
+            'INSERT arrayref of size > 0 with sql()');
+interp_test(['INSERT INTO mytable', [1, sql(\$x, '*', \$x)]],
             ['INSERT INTO mytable VALUES(?,  ? * ?)', 1, $x, $x],
             'INSERT arrayref of size > 0 with macro');
 # OK in mysql
@@ -67,14 +100,11 @@ interp_test(['INSERT INTO mytable', $h],
             ["INSERT INTO mytable ($h_keys->[0], $h_keys->[1]) VALUES(?, ?)", @$h_values],
             'INSERT hashref of size > 0');
 interp_test(['INSERT INTO mytable', $h2],
-            ["INSERT INTO mytable ($h2_keys->[0], $h2_keys->[1]) VALUES($h2_places->[0], $h2_places->[1])", 1],
-            'INSERT hashref of size > 0 with sql_literal');
-interp_test(['INSERT INTO mytable',
-                {one => 1, two => $var2, three => sql_literal('3')}],
-            ['INSERT INTO mytable (three, one, two) VALUES(3, ?,  ?)',
-                [1, sql_var(\1)], [${$var2->{value}}, $var2]],
-            'INSERT hashref of sql_var types, sql_literal');
-interp_test(['INSERT INTO mytable', {one => 1, two => sql_fragment(\$x, '*', \$x)}],
+            ["INSERT INTO mytable ($h2_keys->[0], $h2_keys->[1], $h2_keys->[2]) " .
+             "VALUES($h2_places->[0], $h2_places->[1],  $h2_places->[2])",
+             @$h2_values2],
+            'INSERT hashref of sql_var + sql()');
+interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
             'INSERT hashref with macro');
 # mysql
@@ -87,40 +117,43 @@ interp_test(['INSERT HIGH_PRIORITY IGNORE INTO mytable', $v],
 interp_test(['WHERE field IN', \$x],
             ['WHERE field IN (?)', $x],
             'IN scalarref');
-interp_test(['WHERE field IN', sql_literal($x)],
+interp_test(['WHERE field IN', sql($x)],
             ["WHERE field IN $x"], # invalid
-            'IN sql_literal');
+            'IN sql()');
 interp_test(['WHERE field IN', $v0],
-            ['WHERE 1=1'],
+            ['WHERE 1=0'],
             'IN arrayref of size = 0');
 interp_test(['WHERE field IN', $v],
             ['WHERE field IN (?, ?)', @$v],
             'IN arrayref of size > 0');
 interp_test(['WHERE field IN', $v2],
             ['WHERE field IN (?, two)', 'one'],
-            'IN arrayref with sql_literal');
-interp_test(['WHERE field IN', [1, sql_fragment(\$x, '*', \$x)]],
+            'IN arrayref with sql()');
+interp_test(['WHERE field IN', [1, sql(\$x, '*', \$x)]],
             ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
             'IN arrayref with macro');
 interp_test(['WHERE', {field => $v}],
             ['WHERE field IN (?, ?)', 'one', 'two'],
             'hashref with arrayref');
 interp_test(['WHERE', {field => $v0}],
-            ['WHERE 1=1'],
+            ['WHERE 1=0'],
             'hashref with arrayref of size = 0');
-interp_test(['WHERE', {field => [1, sql_fragment(\$x, '*', \$x)]}],
+interp_test(['WHERE', {field => [1, sql(\$x, '*', \$x)]}],
             ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
             'hashref with arrayref with macro');
+interp_test(['WHERE field in', $v0],
+            ['WHERE 1=0'],
+            'IN lowercase');  # fails in 0.31
 
 # SET
 interp_test(['UPDATE mytable SET', $h],
             ["UPDATE mytable SET $h_keys->[0]=?, $h_keys->[1]=?", @$h_values],
             'SET hashref');
 interp_test(['UPDATE mytable SET',
-                {one => 1, two => $var2, three => sql_literal('3')}],
+                {one => 1, two => $var2, three => sql('3')}],
             ['UPDATE mytable SET three=3, one=?, two= ?',
                 [1, sql_var(\1)], [${$var2->{value}}, $var2]],
-            'SET hashref of sql_var types, sql_literal');
+            'SET hashref of sql_var types, sql()');
 #FIX--what if size of hash is zero? error?
 
 # WHERE hashref
@@ -130,9 +163,9 @@ interp_test(['WHERE', $h0],
 interp_test(['WHERE', $h],
             ["WHERE ($h_keys->[0]=? AND $h_keys->[1]=?)", @$h_values],
             'WHERE hashref of size > 0');
-interp_test(['WHERE', {x => 1, y=>sql_literal('2')}],
+interp_test(['WHERE', {x => 1, y=>sql('2')}],
             ['WHERE (y=2 AND x=?)', 1],
-            'WHERE hashref sql_literal');
+            'WHERE hashref sql()');
 interp_test(['WHERE', \$x],
             ['WHERE ?', $x],
             'WHERE scalarref');
@@ -160,9 +193,9 @@ my $h5_values = [map {$_ eq 'x' ? [$x, sql_var(\$x)] : ([3, sql_var(\3)], [${$va
 interp_test(['WHERE', $h5],
             ["WHERE ($h5_places->[0] AND $h5_places->[1])", @$h5_values],
             'WHERE hashref of arrayref of sql_var typed');
-interp_test(['WHERE', {x => $x, y => sql_literal('z')}],
+interp_test(['WHERE', {x => $x, y => sql('z')}],
             ['WHERE (y=z AND x=?)', $x],
-            'WHERE hashref of \$x, sql_literal');
+            'WHERE hashref of \$x, sql()');
 
 # error handling
 error_test(['SELECT', []], qr/unrecognized.*array.*select/i, 'err1');

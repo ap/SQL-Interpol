@@ -15,8 +15,11 @@ t/lib.pl
 t/dbi.t
 t/dbi_filter.t
 t/dbi_interp.t
+t/dist.t
 t/filter.t
 t/macro.t
+t/pod.t
+t/pod-coverage.t
 t/sql_interp.t
 t/lib/DBD/Mock.pm
 META.yml

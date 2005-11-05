@@ -178,4 +178,65 @@
 
 	- Added Carp
 
+0.32	2005-11-05
 
+	## SQL::Interpolate
+
+	This module has simplified, and it incorporates defect
+	corrections and style improvements.
+
+	- Fixed ("x IN", []) to return "1=0" not "1=1".
+
+	- Fixed ("x in", \@v) to not fail when "in" lowercase.
+
+	- Fixed sql_interp.t on some platforms
+	  (perl.cpan.testers, 254029)
+
+	- Fixed sub-module version numbers for CPAN.
+
+	- New sql() function (based on SQL::Interpolate::SQL
+	  from Macro.pm).  sql_literal() is now depreciated
+	  in favor of sql().
+
+	- sql_interp() now handles recursion correctly.
+
+	- sql_flatten() moved into SQL::Interpolate::Macro.
+
+	- Added pod.t - Test::Pod checks
+
+	- Added pod-coverage.t - Test::Pod::Coverage checks
+
+	- Added dist.t - distribution checks
+
+	- POD and code style improvements.
+
+	## DBIx::Interpolate
+
+	- Removed AUTOLOAD usage.
+
+	## SQL::Macro
+
+	The macro framework has been refined.
+
+	- Fixed sql_and(sql()) and sql_or(sql()) to
+	  now return '1=1' and '1=0' respectively (rather than "()").
+
+	- sql_flatten() now expands depth-first rather than
+	  breadth-first.
+
+	- sql_fragment() is now depreciated.  Use sql() instead.
+
+	- relations() is now depreciated.  Use sql_rel_filter() instead.
+
+	- expand() no longer has $filter param.  Macros now
+	  query the $interp object for state.
+
+	- SQLFilter::macro_names() no longer used.  The $interp
+	  object no longer knows which macro object use which filters.
+
+	- SQLFilter::filter_text_fragment() no longer has $changing_ref
+	  in parameter list.
+
+	## SQL::Interpolate::Filter
+
+	- sql// objects now transform into calls to make_sql().
