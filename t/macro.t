@@ -14,6 +14,19 @@ my $interp = new SQL::Interpolate(sql_rel_filter({
         name => qr/^([A-Z])([A-Z])$/, key => ['msid_1', 'msid_2']}
 }));
 
+flatten_test2(
+    [ [[sql_paren(\1)]] ],
+    [ [[sql( q[(], \1, q[)] )]] ],
+    '[[macro]]'
+);
+
+flatten_test2(
+    [ 'WHERE', {x => sql_paren(\1)} ],
+    [ 'WHERE', {x => sql( q[(], \1, q[)] )} ],
+    '{x => macro}'
+);
+
+
 # paren()
 &flatten_test(
     ['WHERE', sql_paren(sql_paren('x = ', \5))],
@@ -136,6 +149,12 @@ sub flatten_test
     my_deeply([sql_flatten @$snips], $expect, $name);
 }
 
+sub flatten_test2
+{
+    my($snips, $expect, $name) = @_;
+
+    is(Dumper([sql_flatten @$snips]), Dumper($expect), $name);
+}
 
 
 #FIX--broken test

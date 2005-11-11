@@ -1,6 +1,6 @@
 package SQL::Interpolate;
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 use strict;
 use warnings;
@@ -25,6 +25,36 @@ my $trace_filter_enabled = 0;
 
 # whether macros are enabled
 my $macros_enabled = 0;
+
+# regexes
+my $id_match = qr/[a-zA-Z_\.]+/;
+my $table_name_match = $id_match;
+
+
+# next ID to use for table alias
+# [local to sql_interp functions]
+my $alias_id = 0;
+
+# current index in interpolation list
+# [local to sql_interp functions]
+my $idx = 0;
+
+# current interpolation list
+# [local to sql_interp functions]
+my $items_ref = undef;
+
+# whether typed sql_var() ever used (if so,
+# format of @bind result is more complicated)
+# [local to sql_interp functions]
+my $is_var_used = 0;
+
+# state item (SQL::Iterpolate or DBI handle) used in interpolation.
+# [local to sql_interp functions]
+my $state = undef;
+
+# bind elements in interpolation
+# [local to sql_interp functions]
+my @bind;
 
 sub import {
     my $class  = shift;
@@ -107,11 +137,19 @@ sub new {
     return $self;
 }
 
+# note: sql_interp is not reentrant.
 sub sql_interp {
     my @items = @_;
 
+    # clear call state
+    $alias_id = 0;
+    $idx = 0;
+    $items_ref = undef;
+    $is_var_used = 0;
+    $state = undef;
+    @bind = ();
+
     # extract state item (if any)
-    my $state;
     my $interp;
     if (UNIVERSAL::isa($items[0], 'SQL::Interpolate')) {
         $state = $interp = $items[0];
@@ -131,13 +169,13 @@ sub sql_interp {
         shift @items if $state;
     }
 
+    $items_ref = \@items;
+
     # interpolate!
-    my $varobj_used = 0;  # whether typed sql_var() ever used (if so,
-                          # format of @bind result is more complicated)
-    my ($sql, @bind) = _sql_interp($state, \$varobj_used, @items);
+    my $sql = _sql_interp(@items);
 
     # convert bind values to complex format (if needed)
-    if ($varobj_used) {
+    if ($is_var_used) {
         for my $val (@bind) {
             my $valcopy = $val;
             ! ref $val and $val = [$val, sql_var(\$valcopy)];
@@ -159,17 +197,11 @@ sub sql_interp {
 }
 
 # helper called by sql_interp()
-# $state - SQL::Interpolate derived object, DBI handle, or undef
-# $varobj_used_ref - reference to Boolean indicator of complex
-#                    bind format [out]
 # @items - interpolation list (no macros)
 sub _sql_interp {
-    my ($state, $varobj_used_ref, @items) = @_;
+    my (@items) = @_;
 
     my $sql = '';
-    my @bind;
-    my $id_match = qr/[a-zA-Z_\.]+/;
-    my $idx = 0;
 
     foreach my $item (@items) {
         my $varobj;
@@ -177,14 +209,15 @@ sub _sql_interp {
         if (ref $item eq 'SQL::Interpolate::Variable') {
             unless (keys %$item == 1 && defined($item->{value})) {
                 $varobj = $item;
-                $$varobj_used_ref = 1;
+                $is_var_used = 1;
             }
             $item = $item->{value};
         }
 
         if (ref $item eq 'SQL::Interpolate::SQL') {
-            my ($sql2, @bind2) = _sql_interp($state, $varobj_used_ref, @$item);
-            $sql .= " $sql2";
+            my ($sql2, @bind2) = _sql_interp(@$item);
+            $sql .= ' ' if $sql ne '';
+            $sql .= $sql2;
             push @bind, @bind2;
         }
         elsif (ref $item) {
@@ -196,8 +229,7 @@ sub _sql_interp {
                     }
                     else {
                         $sql .= " (" . join(', ', map {
-                            _sql_interp_data($state, \@bind,
-                                $varobj_used_ref, $_);
+                            _sql_interp_data($_);
                         } @$item) . ")";
                     }
                 }
@@ -211,28 +243,43 @@ sub _sql_interp {
                     my $key = $_;
                     my $val = $item->{$key};
                     "$key=" .
-                        _sql_interp_data($state, \@bind,
-                                         $varobj_used_ref, $val);
+                        _sql_interp_data($val);
                 } keys %$item);
             }
-            elsif ($sql =~ /\bINSERT[\w\s]*\sINTO\s*$id_match\s*$/si)
-            {
+            elsif ($sql =~ /\bINSERT[\w\s]*\sINTO\s*$id_match\s*$/si) {
                 $item = [ $$item ] if ref $item eq 'SCALAR';
                 if (ref $item eq 'ARRAY') {
                     $sql .= " VALUES(" . join(', ', map {
-                        _sql_interp_data($state, \@bind,
-                                         $varobj_used_ref, $_);
+                        _sql_interp_data($_);
                     } @$item) . ")";
                 }
                 elsif (ref $item eq 'HASH') {
                     $sql .=
                         " (" . join(', ', keys %$item) . ")" .
                         " VALUES(" . join(', ', map {
-                            _sql_interp_data($state, \@bind,
-                                             $varobj_used_ref, $_);
+                            _sql_interp_data($_);
                         } values %$item) . ")";
                 }
                 else { _error_item($idx, \@items); }
+            }
+            elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
+                # table reference
+
+                # get alias for table
+                my $table_alias = undef; # alias given to table
+                my $next_item = $items[$idx + 1];
+                if(defined $next_item && ref $next_item eq '' &&
+                   $next_item =~ /\s*AS\b/is)
+                {
+                    $table_alias = undef;  # provided by client
+                }
+                else {
+                    $table_alias = 'tbl' . $alias_id++;
+                }
+
+                $sql .= ' ' unless $sql eq '';
+                $sql .= _sql_interp_resultset($item);
+                $sql .= " AS $table_alias" if defined $table_alias;
             }
             elsif (ref $item eq 'SCALAR') {
                 push @bind, $$item;
@@ -246,20 +293,25 @@ sub _sql_interp {
                     my $s = join ' AND ', map {
                         my $key = $_;
                         my $val = $item->{$key};
-                        if (ref $val eq 'ARRAY') {
-                            _in_list($state, \@bind, $varobj_used_ref,
-                                     $key, $val);
+                        if (! defined $val) {
+                            "$key IS NULL";
+                        }
+                        elsif (ref $val eq 'ARRAY') {
+                            _sql_interp_list($key, $val);
                         }
                         else {
                             "$key=" .
-                            _sql_interp_data($state, \@bind,
-                                             $varobj_used_ref, $val);
+                            _sql_interp_data($val);
                         }
                     } keys %$item;
                     $s = "($s)" if keys %$item > 1;
                     $s = " $s";
                     $sql .= $s;
                 }
+            }
+            elsif (ref $item eq 'ARRAY') {  # result set
+                $sql .= ' ' unless $sql eq '';
+                $sql .= _sql_interp_resultset($item);
             }
             else { _error_item($idx, \@items); }
         }
@@ -278,34 +330,31 @@ sub _sql_interp {
         $idx++;
     }
 
-    return ($sql, @bind);
+    return $sql;
 }
 
 # sql_interp helper function.
 # Interpolate data element in aggregate variable (hashref or arrayref).
-# $state - (may be undef)
-# $bindref - \@bind (is modified--appended to)
-# $varobj_usedref - \$varobj_used (is modified)
 # $ele - raw input element from aggregate.
 # returns $sql
 sub _sql_interp_data {
-    my ($state, $bindref, $varobj_usedref, $ele) = @_;
-    if (ref $ele) {
-        my ($sql2, @bind2) = sql_interp($state || (), $ele);
-        push @$bindref, @bind2;
-        $$varobj_usedref = 1 if ref $bind2[0];
+    my ($ele) = @_;
+    if (ref $ele) {  # e.g. sql()
+        my ($sql2, @bind2) = _sql_interp($ele);
+        push @bind, @bind2;
+        $is_var_used = 1 if ref $bind2[0];
         return $sql2;
     }
     else {
-        push @$bindref, $ele;
+        push @bind, $ele;
         return '?';
     }
 }
 
 # sql_interp helper function to interpolate "key IN list",
 # assuming context ("WHERE", {key => $list, ...}).
-sub _in_list {
-    my ($state, $bindref, $varobj_usedref, $key, $list) = @_;
+sub _sql_interp_list {
+    my ($key, $list) = @_;
     if (@$list == 0) {
         return "1=0";
     }
@@ -313,12 +362,60 @@ sub _in_list {
         my @sqle;
         for my $ele (@$list) {
             my $sqle
-                = _sql_interp_data($state, $bindref, $varobj_usedref, $ele);
+                = _sql_interp_data($ele);
             push @sqle, $sqle;
         }
         my $sql2 = $key . " IN (" . join(', ', @sqle) . ")";
         return $sql2;
     }
+}
+# sql_interp helper function to interpolate result set,
+#   e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
+sub _sql_interp_resultset {
+    my($item) = @_;
+    my $sql = '';
+    if (ref $item eq 'ARRAY') {
+        _error("table reference has zero rows")  # improve?
+            if @$item == 0;
+        my $sql2 = '';
+        if(ref $item->[0] eq 'ARRAY') {
+            _error("table reference has zero columns")  # improve?
+                if @{ $item->[0] } == 0;
+            for my $row ( @$item ) {
+                my $is_first_row = ($sql2 eq '');
+                $sql2 .= ' UNION ALL ' unless $is_first_row;
+                $sql2 .=
+                    "SELECT " .
+                    join(', ', map {
+                        _sql_interp_data($_)
+                    } @$row);
+            }
+        }
+        elsif(ref $item->[0] eq 'HASH') {
+            _error("table reference has zero columns")  # improve?
+                if keys %{ $item->[0] } == 0;
+            my $first_row = $item->[0];
+            for my $row ( @$item ) {
+                my $is_first_row = ($sql2 eq '');
+                $sql2 .= ' UNION ALL ' unless $is_first_row;
+                $sql2 .=
+                    "SELECT " .
+                    join(', ', map {
+                        my($key, $val) = ($_, $row->{$_});
+                        my $sql3 = _sql_interp_data($val);
+                        $sql3 .= " AS $key" if $is_first_row;
+                        $sql3;
+                    } keys %$first_row);
+             }
+        }
+        else {
+            _error_item($idx, $items_ref);
+        }
+        $sql .= ' ' unless $sql eq '';
+        $sql .= "($sql2)";
+    }
+    else { _error_item($idx, $items_ref); }
+    return $sql;
 }
 
 sub sql {
@@ -430,52 +527,66 @@ __END__
 
 =head1 NAME
 
-SQL::Interpolate - Simplified interpolation of Perl variables into SQL statements
+SQL::Interpolate - Interpolate Perl variables into SQL statements
 
 =head1 SYNOPSIS
 
   use SQL::Interpolate qw(:all);
   
-  # Some sample data.
-  my $s = "blue"; my @v = (5, 6);
+  # Some sample data to interpolate:
+  my $s = 'blue'; my @v = (5, 6);
   
-In the most basic usage, scalarrefs (and even arrayrefs) are
-transformed into bind parameters.
-
+  # Variable references are transformed into bind parameters.
+  # The most basic usage involves scalarrefs (as well as arrayrefs
+  # preceeded by "IN").
   my ($sql, @bind) = sql_interp
-    "SELECT * FROM table WHERE x = ", \$s, "AND y IN", \@v;
+    'SELECT * FROM table WHERE x = ', \$s, 'AND y IN', \@v;
   # RESULT:
-  #   $sql  = "SELECT * FROM mytable WHERE x = ? AND y IN (?, ?)"
+  #   $sql  = 'SELECT * FROM mytable WHERE x = ? AND y IN (?, ?)'
   #   @bind = ($s, @v);
-
-  # Hashrefs and arrayrefs provide a short-cut syntax.
-  # A hashref typically acts as a logical-AND construction:
+  
+  # In certain contexts, an arrayref or hashref acts as a single tuple:
   my ($sql, @bind) = sql_interp
-    "SELECT * FROM table WHERE", {x => $s, y => \@v};
+    'INSERT INTO table', {x => $s, y => 1};
   # RESULT:
-  #   $sql  = "SELECT * FROM mytable WHERE (x = ? AND y IN (?, ?))";
-  #   @bind = ($s, @v);
-
-  # In certain contexts, an arrayref or hashref acts as a tuple:
-  my ($sql, @bind) = sql_interp
-    "INSERT INTO table", {x => $s, y => 1};
-  # RESULT:
-  #   $sql  = "INSERT INTO mytable (x, y) VALUES(?, ?)";
+  #   $sql  = 'INSERT INTO mytable (x, y) VALUES(?, ?)';
   #   @bind = ($s, 1);
   my ($sql, @bind) = sql_interp
-    "UPDATE table SET", {x => $s, y => 1}, "WHERE y <> ", \2;
+    'UPDATE table SET', {x => $s, y => 1}, 'WHERE y <> ', \2;
   # RESULT:
-  #   $sql  = "UPDATE mytable SET x = ?, y = ? WHERE y <> ?";
+  #   $sql  = 'UPDATE mytable SET x = ?, y = ? WHERE y <> ?';
   #   @bind = ($s, 1, 2);
   
-  # The result is suitable for passing to DBI:
+  # In general, a hashref provides a shortcut for specifying
+  # a logical-AND construction:
+  my ($sql, @bind) = sql_interp
+    'SELECT * FROM table WHERE', {x => $s, y => \@v};
+  # RESULT:
+  #   $sql  = 'SELECT * FROM mytable WHERE (x = ? AND y IN (?, ?))';
+  #   @bind = ($s, @v);
+  
+  # In general, an arrayref acts as a result set or reference to
+  # a temporary table:
+  my ($sql, @bind) = sql_interp
+    [[1, 2], [4, 5]], 'UNION', [{x => 2, y => 3}, {x => 5, y => 6};
+  # RESULT:
+  #   $sql  = '(SELECT ?, ? UNION ALL SELECT ?, ?) UNION
+  #            (SELECT ? AS x, ? AS y UNION ALL SELECT ?, ?)';
+  #   @bind = (1,2,4,5, 2,3,5,6);
+  my ($sql, @bind) = sql_interp
+    'SELECT * FROM', [[1, 2], [4, 5]]
+  # RESULT:
+  #   $sql  = 'SELECT * FROM (SELECT ?, ? UNION ALL SELECT ?, ?) AS tbl0';
+  #   @bind = (1,2,4,5);
+  
+  # Each result above is suitable for passing to DBI:
   my $res = $dbh->selectall_arrayref($sql, undef, @bind);
-
-Besides these simple techniques shown, SQL-Interpolate includes
-various optional modules to further integrate SQL::Interpolate with
-DBI and streamline the syntax with source filtering and macros (see
-the L</SEE ALSO> section):
-
+  
+  # Besides these simple techniques shown, SQL-Interpolate includes
+  # various optional modules to further integrate SQL::Interpolate with
+  # DBI and streamline the syntax with source filtering and macros (see
+  # the L</SEE ALSO> section):
+  
   use DBIx::Interpolate FILTER => 1;
   ...
   my $rows = $dbx->selectall_arrayref(sql[
@@ -505,8 +616,7 @@ This can be ameliorated somewhat with "SQL building techniques,"
 but SQL::Interpolate eliminates much of this need with a terse
 Perl-like syntax:
 
-  my ($sql, @bind) = sql_interp
-      "INSERT INTO table",
+  my ($sql, @bind) = sql_interp 'INSERT INTO table',
       {color => $c, shape => $s, width => $w, height => $h, length => $l};
   $dbh->do($sql, undef, @bind);
 
@@ -518,9 +628,9 @@ L<DBI|DBI> documentation has several links on the topic.
 
 =head1 INTERFACE
 
-The central function of this module is C<sql_interp>.  The rest of
+The central function of this module is C<sql_interp()>.  The rest of
 this distribution provides alternative interfaces, supporting
-functionality, and wrappers for sql_interp.
+functionality, and wrappers for C<sql_interp()>.
 
 =head2 C<sql_interp>
 
@@ -536,25 +646,25 @@ for passing to DBI.
 The interpolation list can contain elements of these types (the first
 two are most often used):
 
-* B<SQL> - strings containing raw SQL fragments such as
-"SELECT * FROM mytable WHERE".
+* B<SQL> - string containing a raw SQL fragment such as
+'SELECT * FROM mytable WHERE'.
 
-* B<variable references> - scalarrefs, arrayrefs, hashrefs, or
-L</sql_var> objects referring to data to interpolate between
+* B<variable reference> - scalarref, arrayref, hashref, or
+L</sql_var> object referring to data to interpolate between
 the SQL.
 
-* B<macros> - objects that may be further expanded into previous
+* B<macro> - object that may be further expanded into previous
 three types of elements.  Some strings may expand into macro objects.
 Macros are explained in L<SQL::Interpolate::Macro|SQL::Interpolate::Macro>.
 
-* B<other interpolation lists> - an interpolation list can be nested
+* B<other interpolation list> - an interpolation list can be nested
 inside another interpolation list.  This is possible with the sql()
 function.
 
-In addition, the first element in the interpolation list may
-optionally be a database handle or (for the OO interface) an instance
-of SQL::Interpolate.  sql_interp and macros may use this state data to
-customize the output such as for a dialect of SQL.
+In addition, the first element in the interpolation list may represent
+state data in the form of a database handle or (for the OO interface)
+an instance of SQL::Interpolate.  sql_interp and macros may use this
+state data to customize the output, such as for a dialect of SQL.
 
 The basic interpolation process is as follows. Strings are appended to
 the output SQL ($sql), possibly with some context-dependent tweaking.
@@ -564,52 +674,95 @@ pushed onto @bind.  Nested interpolation lists are generally flattened.
 
 B<Interpolation Examples>
 
- # sample data
+ # sample data to interpolate
  my $s  = \3;                   # scalarref
  my $v  = [1, 2];               # arrayref (vector)
- my $h  = {m => 1, n => 2};     # hashref
+ my $h  = {m => 1, n => undef}; # hashref
  my $hv = {v => $v, s => $$s};  # hashref containing arrayref
- Let $x stand for \$s, $h, $v, or $hv.
+ my $vv = [$v, $v];             # arrayref of arrayref
+ my $vh = [$h, $h];             # arrayref of hashref
+ Let $x stand for \$s, $v, $h, $hv, $vv, or $vh.
 
-B<Default scalar behavior>
+B<Default scalarref behavior> -- single bind value
 
- INPUT:  "foo", $s, "bar"
- OUTPUT: "foo ? bar", $$s
+  INPUT:  'foo', $s, 'bar'
+  OUTPUT: 'foo ? bar', $$s
 
-B<Default hashref behavior>
+B<Default hashref behavior> -- logical-AND
 
- INPUT:  "WHERE", $x
- OUTPUT: "WHERE (m=? AND n=?)", $h->{m}, $h->{n}    # $x = $h
- OUTPUT: "WHERE (v IN (?, ?) AND s = ?)", @$v, $$s  # $x = $hv
+  INPUT:  'WHERE', $x
+  OUTPUT: 'WHERE (m=? AND n IS NULL)', $h->{m},      # $x = $h
+  OUTPUT: 'WHERE (v IN (?, ?) AND s = ?)', @$v, $$s  # $x = $hv
 
-B<IN clause>
+B<Default arrayref behavior> -- invalid
 
- INPUT:  "WHERE x IN", $x
- OUTPUT: "WHERE x IN (?)", $$s                      # $x = $s
- OUTPUT: "WHERE x IN (?, ?)", @$v                   # $x = $v
- OUTPUT: "WHERE 1=0", @$x                           # @x = ()
- # Note: An arrayref of length 0 is handled specially
- # because "WHERE x IN ()" can be invalid SQL (e.g. MySQL).
+  # Arrayrefs do not have a default behavior.  They cannot
+  # be used except in the special contexts described later.
+  INPUT:  'SELECT', [1, 2, 3]  # INVALID
 
-B<INSERT statements>
+B<Context ('IN', $x)> -- list
 
- INPUT:  "INSERT INTO mytable", $x
- OUTPUT: "INSERT INTO mytable VALUES(?)", $$s;      # $x = $s
- OUTPUT: "INSERT INTO mytable VALUES(?, ?)", @$v;   # $x = $v
- OUTPUT: "INSERT INTO mytable (m, n) VALUES(?, ?)", # $x = $h
-         $h->{m}, $h->{n}
+  INPUT:  'WHERE x IN', $x
+  OUTPUT: 'WHERE x IN (?, ?)', @$v                   # $x = $v
+  OUTPUT: 'WHERE x IN (?)', $$s                      # $x = $s
+  OUTPUT: 'WHERE 1=0'                                # $x = []
+  # Note: An arrayref of length 0 is handled specially
+  # because 'WHERE x IN ()' can be invalid SQL (e.g. MySQL/PostgreSQL).
 
-B<UPDATE statements>
+B<Context ('INSERT INTO tablename', $x)> -- tuple
 
- INPUT:  "UPDATE mytable SET", $h
- OUTPUT: "UPDATE mytable SET m = ?, n = ?", $h->{m}, $h->{n}
+  INPUT:  'INSERT INTO mytable', $x
+  OUTPUT: 'INSERT INTO mytable (m, n) VALUES(?, ?)', # $x = $h
+          $h->{m}, $h->{n}
+  OUTPUT: 'INSERT INTO mytable VALUES(?, ?)', @$v;   # $x = $v
+  OUTPUT: 'INSERT INTO mytable VALUES(?)', $$s;      # $x = $s
+
+B<Context ('SET', $x)> -- tuple
+
+  INPUT:  'UPDATE mytable SET', $h
+  OUTPUT: 'UPDATE mytable SET m = ?, n = ?', $h->{m}, $h->{n}
+
+B<Default arrayref of (hashref or arrayref) behavior> -- result set
+
+  INPUT:  $x
+  OUTPUT: '(SELECT ?, ? UNION ALL SELECT ?, ?)',
+          map {@$_} @$v                           # $x = $vv
+  OUTPUT: '(SELECT ? as m, ? as n UNION ALL
+            SELECT ?, ?)',
+          $vh->[0]->{m}, $vh->[0]->{n},
+          $vh->[1]->{m}, $vh->[1]->{n}            # $x = $vh
+
+  # Typical usage:
+  INPUT: $x
+  INPUT: $x, 'UNION [ALL|DISTINCT]', $x
+  INPUT: 'INSERT INTO mytable', $x
+  INPUT: 'SELECT * FROM mytable WHERE x IN', $x
+
+B<Context ('FROM | JOIN', $x)> -- table reference
+
+  IN:  'SELECT * FROM', $x
+  OUT: 'SELECT * FROM
+       (SELECT ?, ? UNION ALL SELECT ?, ?) as t001',
+       map {@$_} @$v                                     # $x = $vv
+  OUT: 'SELECT * FROM
+       (SELECT ? as m, ? as n UNION ALL SELECT ?, ?) as temp001',
+       $vh->[0]->{m}, $vh->[0]->{n},
+       $vh->[1]->{m}, $vh->[1]->{n}                      # $x = $vh
+
+  IN:  'SELECT * FROM', $vv, 'AS t'
+  OUT: 'SELECT * FROM
+       (SELECT ?, ? UNION ALL SELECT ?, ?) AS t',
+       map {@$_} @$v
+
+  # Example usage (where $x and $y are table references):
+  'SELECT * FROM', $x, 'JOIN', $y
 
 B<Other rules>
 
 Whitespace is automatically added between parameters:
 
- INPUT:  "UPDATE", "mytable SET", {x => 2}, "WHERE y IN", \@colors;
- OUTPUT: "UPDATE mytable SET x = ? WHERE y in (?, ?)", 2, @colors
+ INPUT:  'UPDATE', 'mytable SET', {x => 2}, 'WHERE y IN', \@colors;
+ OUTPUT: 'UPDATE mytable SET x = ? WHERE y in (?, ?)', 2, @colors
 
 Variables must be passed as references (possibly using the
 sql// operator when source filtering is enabled); otherwise, they will
@@ -623,8 +776,8 @@ elements may be also be sql_var(), sql(), or macro objects.
 
 sql_interp will Do The Right Thing(TM) on trivial cases:
 
-  INPUT: "SELECT * FROM table WHERE color IN", []
-  OUTPUT: "SELECT * FROM table WHERE 1=0"
+  INPUT:  'SELECT * FROM table WHERE color IN', []
+  OUTPUT: 'SELECT * FROM table WHERE 1=0'
   # invalid to MySQL: SELECT * FROM table WHERE color IN ()
 
 SQL::Interpolate does not attempt to further optimize away such
@@ -635,13 +788,38 @@ Variable interpolation is context-sensitive.  The same variable
 references can generate different SQL sub-expressions depending on
 context:
 
-  INPUT:  "INSERT INTO mytable", $h
-  OUTPUT: "INSERT INTO mytable (m, n) VALUES(?, ?)", ...
+  INPUT:  'INSERT INTO mytable', $h
+  OUTPUT: 'INSERT INTO mytable (m, n) VALUES(?, ?)', ...
 
-  INPUT:  "UPDATE mytable SET", $h
-  OUTPUT: "UPDATE mytable SET m = ?, n = ?", ...
+  INPUT:  'UPDATE mytable SET', $h
+  OUTPUT: 'UPDATE mytable SET m = ?, n = ?', ...
 
 B<Error handling:> On error, sql_interp will croak with a string message.
+
+B<Other notes>
+
+An interesting property is that result sets allow passing DBI results
+back into the interpolation list:
+
+  # DBIx::Interpolate example (note: $vv2 is identical to $vv)
+  my $vv2 = $dbx->selectall_arrayref($dbx->selectall_arrayref($vv));
+
+In certain cases (e.g. for INSERT and IN), a result set
+can be used as an alternative to a single tuple:
+
+  # (tuple)
+  INPUT:  'SELECT * FROM mytable WHERE x IN', $v
+  OUTPUT: 'SELECT * FROM mytable WHERE x IN (?, ?)', @$v
+  # (subselect)
+  INPUT:  'SELECT * FROM mytable WHERE x IN', [$v]
+  OUTPUT: 'SELECT * FROM mytable WHERE x IN (SELECT ?, ?)', @$v
+  
+  # (tuple)
+  INPUT:  'INSERT INTO mytable', $v
+  OUTPUT: 'INSERT INTO mytable VALUES (?, ?)', @$v
+  # (subselect)
+  INPUT:  'INSERT INTO mytable', [$v]
+  OUTPUT: 'INSERT INTO mytable (SELECT ?, ?)', @$v
 
 =head2 C<sql>
 
@@ -656,12 +834,12 @@ be done with a plain string because any scalar value in an arrayref or
 hashref is interpreted as a binding variable.  An sql object must be
 used explicitly for force a change in context:
 
-  sql_interp "INSERT INTO mytable",
-      {x => $x, y => sql("CURRENT_TIMESTAMP")};
-  # OUTPUT: "INSERT INTO mytable (x, y) VALUES(?, CURRENT_TIMESTAMP)", $x
+  sql_interp 'INSERT INTO mytable',
+      {x => $x, y => sql('CURRENT_TIMESTAMP')};
+  # OUTPUT: 'INSERT INTO mytable (x, y) VALUES(?, CURRENT_TIMESTAMP)', $x
   
-  sql_interp "INSERT INTO mytable", [$x, sql(\$y, "*", \$z)];
-  # OUTPUT: "INSERT INTO mytable VALUES(?, ? * ?)", $x, $y, $z
+  sql_interp 'INSERT INTO mytable', [$x, sql(\$y, '*', \$z)];
+  # OUTPUT: 'INSERT INTO mytable VALUES(?, ? * ?)', $x, $y, $z
 
 =head2 C<sql_var>
 
@@ -683,8 +861,8 @@ sql_var objects are useful only in special cases where additional
 information should be tagged onto the variable.  For example, DBI
 allows bind variables to be given an explicit type:
 
-  my ($sql, @bind) = sql_interp "SELECT * FROM mytable WHERE",
-      "x=", \$x, "AND y=", sql_var(\$y, SQL_VARCHAR), "AND z IN",
+  my ($sql, @bind) = sql_interp 'SELECT * FROM mytable WHERE',
+      'x=', \$x, 'AND y=', sql_var(\$y, SQL_VARCHAR), 'AND z IN',
       sql_var([1, 2], SQL_INTEGER);
   # RESULT: @bind =
   #   ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
@@ -771,7 +949,7 @@ These are more advanced examples.
 
   my $sth;
   for my $href (@array_of_hashrefs) {
-     my @list = ("SELECT * FROM mytable WHERE", $href);
+     my @list = ('SELECT * FROM mytable WHERE', $href);
      my ($sql, @bind) = sql_interp @list;
      die 'ASSERT' if $sth && $sth->{Statement} ne $sql;
      $sth = $dbh->prepare($sql) unless $sth;
@@ -786,8 +964,8 @@ handles.
 
 =head2 Binding variables types (DBI bind_param)
 
-  my ($sql, @bind) = sql_interp "SELECT * FROM mytable WHERE",
-      "x=", \$x, "AND y=", sql_var(\$y, SQL_VARCHAR), "AND z IN",
+  my ($sql, @bind) = sql_interp 'SELECT * FROM mytable WHERE',
+      'x=', \$x, 'AND y=', sql_var(\$y, SQL_VARCHAR), 'AND z IN',
       sql_var([1, 2], SQL_INTEGER);
   # RESULT:
   #   @bind = ([$x, sql_var(\$x)], [$y, sql_var(\$y, type => SQL_VARCHAR)],
@@ -803,7 +981,7 @@ handles.
   my $ret = $sth->selectall_arrayref();
 
 This kludge is similar to the approach in L<SQL::Abstract's
-bindtype|SQL::Abstract/bind_type>.
+bindtype|SQL::Abstract/bindtype>.
 DBIx::Interpolate provides a simpler way of handling bind_type.
 
 =head1 DESIGN NOTES
@@ -864,9 +1042,9 @@ intended to be natural and terse for the most common cases.  This is
 demonstrated in the examples.
 
 Now, it may be a bit inconsistent that a hashref has two meanings. The
-hashref in ("WHERE", \%hash) represents a logical AND-equal
-construction, whereas the hashref in ("INSERT INTO mytable", \%hash)
-and ("UPDATE mytable SET", \%hash) represents a tuple or portion of
+hashref in ('WHERE', \%hash) represents a logical AND-equal
+construction, whereas the hashref in ('INSERT INTO mytable', \%hash)
+and ('UPDATE mytable SET', \%hash) represents a tuple or portion of
 it.  However, there is little ambiguity since a swap of the two
 meanings results in illogical statements.  There is a limited number
 of plausible meanings and these constructions, and these two are the
@@ -882,26 +1060,26 @@ Using an arrayref [x => $x, y => $y] rather than a hashref for the
 AND'ed construction could work just as well, and it allows duplicate
 keys and non-scalar keys.  However, SQL::Interpolate reserves [...]
 for future use.  SQL::Interpolate interprets an arrayref
-inside a hashref such as {x => \@y, ...} as an "x IN y" construction.
+inside a hashref such as {x => \@y, ...} as an 'x IN y' construction.
 This was independently suggested by a number of people and unlikely
-to be confused with the "x = y" since and x and y have different
+to be confused with the 'x = y' since and x and y have different
 dimensions (one is scalar and the other is a vector).
 
 It may be a bit inconsistent that scalars inside hashrefs and
 arrayrefs are interpreted as binding variables rather than SQL
 as is the case outside.
 
-  "WHERE", "x = ", \$x  # variables outside must be referenced
-  "WHERE", {x => $x}    # variables inside should not be referenced
-  "WHERE", [$x,$y]      # variables inside should not be referenced
+  'WHERE', 'x = ', \$x  # variables outside must be referenced
+  'WHERE', {x => $x}    # variables inside should not be referenced
+  'WHERE', [$x,$y]      # variables inside should not be referenced
 
 However, this not too much a stretch of logicality, and the
 alternatives are not pretty and do not satisfy the commonest case.
 Consider:
 
-  "WHERE", {x => \$x, y => \$y, z => 'CURRENT_TIMESTAMP'}
-  "WHERE x IN", [\1, \2, \3]
-  "WHERE x IN", \\@colors ("double referencing")
+  'WHERE', {x => \$x, y => \$y, z => 'CURRENT_TIMESTAMP'}
+  'WHERE x IN', [\1, \2, \3]
+  'WHERE x IN', \\@colors  # double referencing
 
 Exceptions from the commonest case require C<sql()>.
 
@@ -932,207 +1110,143 @@ TRACE_SQL option) or look at the source code of sql_interp.  If
 needed, you can disable context sensitivity by inserting a null-string
 before a variable.
 
-A few things are just not possible with the ("WHERE, \%hashref)
+A few things are just not possible with the ('WHERE', \%hashref)
 syntax, so in such case, use a more direct syntax:
 
   # ok--direct syntax
-  sql_interp "...WHERE", {x => $x, y => $y}, 'AND y = z';
+  sql_interp '...WHERE', {x => $x, y => $y}, 'AND y = z';
   # bad--trying to impose a hashref but keys must be scalars and be unique
-  sql_interp "...WHERE",
+  sql_interp '...WHERE',
       {sql_var(\$x) => sql('x'), y => $y, y => sql('z')};
+
+In the cases where this module parses or generates SQL fragments,
+this module should work for many databases, but its been tested
+mostly on MySQL and PostgreSQL.  Please information the author
+of any incompatibilities.
 
 =head2 Proposed enhancements
 
-The following enhancements to SQL::Interpolate have been proposed.
-The most important suggestions are listed at top, and some
-suggestions could be rejected.
-
-  # sample data for the below examples
-  my $vv = [$v, $v];
-  my $vh = [$h, $h];
-  my $hh = {1 => $h, 5 => {m => 5, n => 6}};
+The following enhancements to SQL::Interpolate have been proposed
+(not all may be implemented).
+The most important suggestions are generally listed at top.
 
 A tutorial could be useful. (Wojciech)
 
-Undef should be supported as such (slaven).
-http://rt.cpan.org/NoAuth/Bug.html?id=11810
+This might be useful:
 
-  IN:  "WHERE", {bla => undef}
-  OUT: "WHERE bla IS NULL"
+  IN:  'bla IN', [undef, 2]
+  OUT: '(blah IS NULL OR bla IN (?))', 2
+  # possilby also: {bla => [undef, 2]}
 
-Similarly, this would be useful:
+Possibly support result sets inside the hashref logical-AND construct:
 
-  IN:  "bla IN", [undef, 2]  (including {bla => [undef, 2]} syntax)
-  OUT: "(blah IS NULL OR bla IN (?))", 2
+  IN:  {x => [[1],[2]]}
+  OUT: 'x IN (SELECT ? UNION ALL SELECT ?)', 1, 2
 
-B<Result sets>
+Possibly support naming columns on table references when
+expressed as an arrayref of arrayrefs.  Denoting this might require
+a typed object:
 
-In certain contexts, variable references should be interpreted as
-result sets (of any number of tuples):
-
-  # Examples where $x and $y are result sets
-  - $x
-  - $x, "UNION [ALL|DISTINCT]", $y
-  - "INSERT INTO mytable", $x
-  - "SELECT * FROM mytable WHERE x IN", $x
-
-General behavior:
-
-  INPUT:  $x
-  OUTPUT: "SELECT ?", $s                        # $x = \$s
-  OUTPUT: "SELECT ?, ?", @$v                    # $x = $v
-  OUTPUT: "SELECT ? as m, ? as n",              # $x = $h
-          $h->{m}, $h->{n}
-  OUTPUT: "SELECT ?, ? UNION ALL SELECT ?, ?",  # $x = $vv
-          map {@$_} @$v
-  OUTPUT: "SELECT ? as m, ? as n UNION ALL      # $x = $vh
-           SELECT ?, ?",
-          $vh->[0]->{m}, $vh->[0]->{n},
-          $vh->[1]->{m}, $vh->[1]->{n}
-  OUTPUT: "SELECT ? as m, ? as n UNION ALL      # $x = $hh
-           SELECT ?, ?",
-          $hh->{1}->{m}, $hh->{1}->{n},
-          $hh->{5}->{m}, $hh->{5}->{n}
-
-INSERT and IN are special cases since MySQL supports an alternate
-conventional syntax in addition to the subquery syntax above.  When
-both syntaxes are valid, this modules should probably generate the
-conventional syntax.
-
-  # conventional
-  SELECT * FROM mytable WHERE x IN (1,2,3)
-  # subselect
-  SELECT * FROM mytable WHERE x IN (SELECT 1,2,3)
-
-  # conventional
-  INSERT INTO mytable VALUES (1,2,3)
-  INSERT INTO mytable (a,b,c) VALUES (1,2,3)
-  # subselect
-  INSERT INTO mytable SELECT 1,2,3
-  INSERT INTO mytable (a,b,c) SELECT 1,2,3
-  INSERT INTO mytable (a,b,c) (SELECT 1,2,3)  # equivalent
-
-MySQL and DB2 (any other databases?) also support a special
-multi-row INSERT syntax:
-
-  # MySQL
-  INSERT INTO table (a,b,c) VALUES (1,2,3),(4,5,6)
-  # subselect
-  INSERT INTO table SELECT 1,2,3 UNION SELECT 4,5,6
-
-This mechanism allows passing DBI results back into the interpolation
-list:
-
-  # DBIx::Interpolate example ($vv2 is identical to $vv)
-  my $vv2 = $dbx->selectall_arrayref(
-    $dbx->selectall_arrayref($vv));
-
-B<Table references>
-
-In certain contexts, variable references should be interpreted as
-table references (to temporary tables).
-
-  # Example where $x and $y are table references
-  "SELECT * FROM", $x, "JOIN", $y
-
-General behavior:
-
-  IN:  "SELECT * FROM", $x
-  OUT: "SELECT * FROM (SELECT ?) as t001", $s            # $x = \$s
-  OUT: "SELECT * FROM (SELECT ?, ?) as t001", @$v        # $x = $v
-  OUT: "SELECT * FROM (SELECT ? as m, ? as n) as t001",  # $x = $h
-       $h->{m}, $h->{n}
-  OUT: "SELECT * FROM
-       (SELECT ?, ? UNION ALL SELECT ?, ?) as t001",
-       map {@$_} @$v                                     # $x = $vv
-  OUT: "SELECT * FROM
-       (SELECT ? as m, ? as n UNION ALL SELECT ?, ?) as temp001",
-       $vh->[0]->{m}, $vh->[0]->{n},
-       $vh->[1]->{m}, $vh->[1]->{n}                      # $x = $vh
-  OUT: "SELECT * FROM
-       (SELECT ? as x, ? as y UNION ALL SELECT ?, ?) as temp001",
-       $hh->{1}->{m}, $hh->{1}->{n},
-       $hh->{5}->{m}, $hh->{5}->{n}                      # $x = $hh
-
-Complex example:
-
-  IN:  "SELECT * FROM", [[1,2],[3,4]], "JOIN", [5,6], "
-       UNION
-       SELECT * FROM", [7,8,9,10];
-  OUT: SELECT * FROM
-         (SELECT 1,2 UNION ALL SELECT 3,4) as t001 JOIN
-         (SELECT 5,6) as t002
-       UNION
-       SELECT * FROM (SELECT 7,8,9,10) as t003;
-
-Temporary tables created by subselects often require a name in MySQL,
-so one is generated (e.g. t001).  At times, you may want to specify
-your own name with an explicit AS clause:
-
-  IN:  "SELECT * FROM", $vv, "AS t"
-  OUT: "SELECT * FROM
-       (SELECT ?, ? UNION ALL SELECT ?, ?) AS t",
+  IN:  'SELECT * FROM', sql_table($vv, ['x', 'y'])
+  OUT: 'SELECT * FROM
+       (SELECT ? AS x, ? AS y UNION ALL SELECT ?, ?) as t001',
        map {@$_} @$v
-
-B<More proposals>
 
 The following additional type of INSERT might be supported (markt):
 
-  IN:  "INSERT INTO temp (id,val) VALUES", [1,2]
-or
-  IN:  "INSERT INTO temp (id,val)", [1,2]
+  # possible syntax
+  IN:  'INSERT INTO temp (id,val)', [1,2]
+  IN:  'INSERT INTO temp', sql_row([1, 2], ['id', 'val'])
+  IN:  'INSERT INTO temp', sql_row(id => 1, val => 2)
+  # note: an equivalent is currently possible with result sets:
+  IN:  'INSERT INTO temp (id,val)', [[1,2]]
+  OUT: 'INSERT INTO temp (id,val) (SELECT 1, 2)'
+
+Possibly support MySQL and DB2 (any other databases?) style
+multi-row INSERT syntax (unlikely):
+
+  # MySQL
+  INSERT INTO table (a,b,c) VALUES (1,2,3),(4,5,6)
+  # But this might not be needed since it can be done already
+  # with result sets (e.g. MySQL and PostgreSQL):
+  INSERT INTO table (SELECT 1,2,3 UNION SELECT 4,5,6)
 
 Support for placeholders might be added for cases when placing the
-variable references in-line is inconvenient or not desired:
+variable references in-line is inconvenient or not desired (similar
+to SQL::String):
 
-  IN:  "SELECT * FROM mytable WHERE x = ? and y = ?", \$x, \$y
-  OUT: "SELECT * FROM mytable WHERE x = ? and y = ?", $x, $y
+  IN:  'SELECT * FROM mytable WHERE x = ? and y = ?', \$x, \$y
+  OUT: 'SELECT * FROM mytable WHERE x = ? and y = ?', $x, $y
 
-  IN:  "SELECT * FROM mytable WHERE x = :x and y = :y",
+  IN:  'SELECT * FROM mytable WHERE x = :x and y = :y',
        {x => $x, y => $y}
-  OUT: "SELECT * FROM mytable WHERE x = ? and y = ?", $x, $y
+  OUT: 'SELECT * FROM mytable WHERE x = ? and y = ?', $x, $y
 
 Similarly, named placeholders might be supported (possibly via
 sql_var()):
 
-  "SELECT * FROM mytable WHERE",
-    "x=", sql_var("color"), "and", {val => sql_var("weight")},
+  'SELECT * FROM mytable WHERE',
+    'x=', sql_var('color'), 'and', {val => sql_var('weight')},
     sql_val(weight => 100), sql_val(color => 'blue')
 
-Placeholders might be allowed in the interpolation list:
+Another idea to to add some methods to the sql() objects that allow
+sql_interp to be called in a more object-oriented manner (like in
+SQL::String):
 
-  "SELECT * FROM mytable WHERE x = ? and y = ?", \$x, \$y
+ my @bind = sql('WHERE x=', \$x)->get_bind();
+ my $sql  = sql('WHERE x=', \$x)->get_sql();
 
-"AND"s might be made implicit such that the following statements
-become equivalent.  This may not be necessary.
+However, it's not certain that those methods would be used that much.
 
-  sql_interp "...WHERE", {x => 5}, 'AND', sql_or(...)
-  sql_interp "...WHERE", {x => 5}, sql_or(...)  # equivalent
+Possibly allow context to be explicitly specified:
+
+  IN:  'TABLEREF', [[1]]
+  OUT: '(SELECT ?) as tbl0', 1
+  IN:  'RESULTSET', [[1]]
+  OUT: '(SELECT ?)', 1
+  IN:  'ANDCLAUSE', {x => 1}
+  OUT: '(x = ?)', 1
+  IN:  'TUPLE', {x => 1}
+  OUT: 'x = ?', 1
+  # or possibly use macros
+  IN:  sql_tableref( [[1]] )
+  OUT: '(SELECT ?) as tbl0', 1
 
 sql_and and sql_or macros might support hashrefs as well (the former
 for clarity and the latter for terseness):
 
-  "SELECT * FROM mytable WHERE", {x => 2, y => 5}
-  "SELECT * FROM mytable WHERE", sql_and {x => 2, y => 5} # same as above
-  "SELECT * FROM mytable WHERE", sql_or {x => 2, y => 5}
+  'SELECT * FROM mytable WHERE', {x => 2, y => 5}
+  'SELECT * FROM mytable WHERE', sql_and {x => 2, y => 5} # same as above
+  'SELECT * FROM mytable WHERE', sql_or {x => 2, y => 5}
 
 Logical operations might be supported as follows (e.g. junctions).
 This might be rejected due to unintuitive syntax.
 
-  "SELECT * FROM mytable WHERE", {
+  'SELECT * FROM mytable WHERE', {
     x => sql_not(2),   # x <> 2
     y => 5
   }
- "SELECT * FROM mytable WHERE", sql_or { # might be difficult to read
-   x => sql_or(2, 3, sql_and(4, 5)),
-   y => 5
- }
+  'SELECT * FROM mytable WHERE', sql_or { # might be difficult to read
+    x => sql_or(2, 3, sql_and(4, 5)),
+    y => 5
+  }
+  # or
+  'SELECT * FROM mytable WHERE', {
+    sql_not(x => 2),   # x <> 2
+    sql_lt(y => 5),    # y <  5
+  }
 
-Support for tuples (e.g. MySQL) might be added, but this is probably too
-uncommon to be worthwhile to implement:
+Support for tuples (e.g. MySQL/PostgreSQL) might be added, but this is
+probably too uncommon to be worthwhile to implement:
 
-  SELECT * FROM edge WHERE", {"(sid, did)" => [5, 1]}  # equals
-  SELECT * FROM edge WHERE", {"(sid, did)" => [[5, 1], [2, 3]]} # IN
+  INPUT:  'SELECT * FROM edge WHERE', {'(sid, did)' => [5, 1]}
+  OUTPUT: 'SELECT * FROM edge WHERE (sid, did) = (?, ?)', 5, 1
+
+  INPUT:  'SELECT * FROM edge WHERE', {'(sid, did)' => [[5, 1], [2, 3]]}
+  OUTPUT: 'SELECT * FROM edge WHERE (sid, did) IN ((5,1),(2,3))',
+          5, 1, 2, 3  # MySQL (not PostgreSQL)
+  OUTPUT: 'SELECT * FROM edge WHERE (sid, did) IN (SELECT ?,? UNION ALL ?,?)',
+          5, 1, 2, 3  # MySQL or PostgreSQL
 
 =head2 Implementation notes
 
@@ -1144,11 +1258,11 @@ portable 'WHERE id = 5 and 1=1' and 'WHERE id = 5 or 1=0'.
 
 David Manura (L<http://math2.org/david/contact>) (author).
 Feedback incorporated from Mark Stosberg
-(L<http://mark.stosberg.com/>) (recommended simplifying the code
+(L<http://mark.stosberg.com/>) (recommended simplifying the core
 module, simplified the docs, and provided a bunch of other highly
-useful feedback), Mark Tiefenbruck, Wojciech Pietron (Oracle compat),
-Jim Chromie (DBIx::Interpolate idea), Juerd Waalboer, Terrence Brannon
-(early feedback), and others.
+useful feedback), Mark Tiefenbruck (syntax), Wojciech Pietron (Oracle
+compat), Jim Chromie (DBIx::Interpolate idea), Juerd Waalboer,
+Terrence Brannon (early feedback), and others.
 
 =head1 FEEDBACK
 

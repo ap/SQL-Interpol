@@ -7,7 +7,7 @@ use DBI;
 use SQL::Interpolate qw(:all);
 use base qw(Exporter SQL::Interpolate);
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
@@ -422,47 +422,53 @@ __END__
 
 =head1 NAME
 
-DBIx::Interpolate - Integrates SQL::Interpolate into DBI
+DBIx::Interpolate - Interpolate Perl variables into SQL with DBI
 
 =head1 SYNOPSIS
 
   use DBI;
   use DBIx::Interpolate qw(:all);
 
-  # simple usage
-  my $dbx = DBIx::Interpolate->new($dbh);
-  $dbx->selectall_arrayref(
-      "SELECT * FROM table WHERE color IN", \@colors,
-      "AND y =", \$x
+  # This basic usage is all you really need:
+  my $dbx = DBIx::Interpolate->new($dbh);  # Construct object.
+  $dbx->stx()->max_sths(10);               # Optionally enable transparent
+                                           #   statement handle caching.
+  $dbx->selectall_arrayref('               # Perform query.
+      SELECT * FROM table WHERE color IN', \@colors, '
+      AND y =', \$x, 'OR', {z => 3, w => 2}
   );
 
-  # using the DBI adapter (dbi_interp) directly
-  $dbh->selectall_arrayref(dbi_interp
-      "SELECT * FROM mytable WHERE color IN", \@colors,
-      "AND y =", \$x, "OR", {z => 3, w => 2}
+  # The above is largely equivalent to filtering the parameter
+  # list through the function dbi_interp() before passing it to DBI:
+  my $ref = $dbh->selectall_arrayref(dbi_interp '
+      SELECT * FROM mytable WHERE color IN', \@colors, '
+      AND y =', \$x, 'OR', {z => 3, w => 2}
   );
-  # note: dbi_interp typically returns ($sql, \%attr, @bind)
+  # dbi_interp() is a thin wrapper around the function sql_interp()
+  # (see the SQL::Interpolate module for details) except its return
+  # value is in the form DBI expects--typically ($sql, \%attr, @bind).
 
-  # caching statement handles for performance
-  # (note: it is easier to instead enable auto-caching)
-  my $stx = $dbx->prepare();
-      # note: $stx represents a set of statement handles ($sth)
-      # for a class of queries.
-  for my $colors (@colorlists) {
+  # This module is an abstraction of DBI.  This module uses an
+  # abstraction of DBI statement handles called "statement handle
+  # sets" (stx), which are each a set of statement handles
+  # for a class of queries.
+  my $stx = $dbx->prepare();      # create stx
+  for my $colors (@colorlists) {  # run some queries
       $stx->execute("SELECT * FROM table WHERE color IN", $colors);
-          # note: this will transparently prepare a new $sth whenever
-          # one compatible with the given query invocation is not cached.
-      my $ary_ref = $stx->fetchall_arrayref();
+          # execute() transparently prepares a new $sth whenever one
+          # compatible with the given query invocation is not cached.
+      my $ref = $stx->fetchall_arrayref();
   }
 
 =head1 DESCRIPTION
 
-DBIx::Interpolate wraps L<DBI|DBI> and inherits from
-L<SQL::Interpolate|SQL::Interpolate>.  It does nothing more than bring
-SQL::Interpolate behavior into DBI.  The DBIx::Interpolate interface
-is very close to that of DBI.  All DBI-derived methods look and behave
-identically or analogously to their DBI counterparts.  They differ
-mainly in that certain methods, such as do and select.*, expect an
+DBIx:Interpolate interpolates Perl variables into SQL statements in a
+simplified manner and passes the result to DBI.  DBIx::Interpolate
+does nothing more than bring L<SQL::Interpolate|SQL::Interpolate> and
+L<DBI|DBI> together (please read the documentation on those two
+modules for background).  The DBIx::Interpolate interface is very
+close to that of DBI.  Many methods behave like their DBI
+counterparts.  The methods differ mainly in that they expect an
 interpolation list as input:
 
   $dbx->selectall_arrayref(
@@ -474,22 +480,13 @@ DBI:
   $dbh->selectall_arrayref(
       "SELECT * from mytable WHERE height > ?", undef, $x);
 
-DBIx::Interpolate also supports I<statement handle sets>.  A statement
-handle set is an abstraction of a statement handle and represents an
-entire I<set of statement handles> for a given I<class of SQL
-queries>.  This abstraction is used because a single interpolation
-list may interpolate into any number of SQL queries (depending on
-variable input), so multiple statement handles may need to be managed
-and cached.  DBIx::Interpolate also provides a way to handle this
-caching transparently.
-
 =head1 INTERFACE
 
 The parameters for most DBIx::Interpolate methods are internally
 passed to C<dbi_interp()>, which is a thin wrapper around
-L<sql_interp|SQL::Interpolate/sql_interp>.  C<dbi_interp()> accepts a
+L<sql_interp()|SQL::Interpolate/sql_interp>.  C<dbi_interp()> accepts a
 few additional types of parameters and typically returns a parameter
-list suitable for DBI, typically ($statement, \%attr, @bind_values).
+list suitable for DBI--typically ($statement, \%attr, @bind_values).
 Therefore, the previous example is equivalent to
 
   $dbh->select_arrayref(dbi_interp
@@ -523,7 +520,7 @@ accepts an additional $key_field parameter:
 
   $dbh->selectall_hashref($statement, $key_field, \%attr, @bind_values);
 
-dbi_interp can generate the $key_field parameter (as well as \%attr)
+C<dbi_interp()> can generate the $key_field parameter (as well as \%attr)
 as follows:
 
   my ($sql, $key_field, $attr, @bind) = dbi_interp
@@ -551,7 +548,7 @@ called internally by the DBI wrapper methods:
   $keyobj = key_field($key_field);
 
 Creates and returns an SQL::Interpolate::Key macro object, which if
-processed by dbi_interp will cause dbi_interp to return an extra
+processed by C<dbi_interp()> will cause C<dbi_interp()> to return an extra
 $key_field value in the result so that it is suitable for passing into
 $dbh->fetchrow_hashref and related methods.
 
@@ -564,7 +561,7 @@ $dbh->fetchrow_hashref and related methods.
   $attrobj = attr(%attr);
 
 Creates and returns an SQL::Interpolate::Attr macro object, which if
-processed by dbi_interp will cause dbi_interp to add the provided
+processed by C<dbi_interp()> will cause C<dbi_interp()> to add the provided
 key-value pair to the $attr hashref used by DBI methods.
 
   my ($sql, $attr, @bind) =
@@ -572,23 +569,19 @@ key-value pair to the $attr hashref used by DBI methods.
     dbi_interp "SELECT a, b FROM mytable", attr(Columns=>[1,2]);
   $dbh->selectcol_arrayref(@params);
 
-=head2 Additional public functions/methods
-
-=over 4
-
-=item C<make_dbi_interp>
+=head2 C<make_dbi_interp>
 
   $dbi_interp = make_dbi_interp(@params);          # functional
   $dbi_interp = $interp->make_dbi_interp(@params); # OO
 
 This is similar in make_sql_interp except that is generates a closure
-around the dbi_interp function or method rather than sql_interp.
-
-=back
+around the C<dbi_interp()> function or method rather than sql_interp.
 
 =head2 Database object (DBX) methods
 
-Most of these methods are wrappers around the DBI methods.
+An object of type DBIx::Interpolate represents (and wraps) a database
+handle.  Most of its methods are wrappers around corresponding DBI
+methods.
 
 =over 4
 
@@ -630,8 +623,8 @@ pass the DBI handle to code that does not use SQL::Interpolate.
 
  $stx = $dbx->stx();
 
-Returns the underlying statement handle set $stx.
-Each DBIx::Interpolate object contains one statement handle
+Returns the underlying statement handle set $stx. (These are discussed
+later.)  Each DBIx::Interpolate object contains one statement handle
 set for use on non-prepared database calls (e.g. selectall_.*()
 methods).
 
@@ -651,10 +644,11 @@ methods).
 
 =item selectrow_hashref
 
-These methods are identical to those in DBI except that it takes a parameter
-list identical to C<dbi_interp()>.
+These methods are identical to those in DBI except that it takes a
+parameter list identical to C<dbi_interp()>.
 
- my $res = $dbx->selectall_hashref("SELECT * FROM mytable WHERE x=", \$x);
+ my $res = $dbx->selectall_hashref(
+               "SELECT * FROM mytable WHERE x=", \$x);
 
 =item prepare
 
@@ -663,8 +657,16 @@ list identical to C<dbi_interp()>.
 Creates a new statement handle set ($stx of type
 SQL::Interpolate::STX) associated with $dbx.  There are no parameters.
 
-A statement handle set represents a set of statement handles for a
-class of queries.  Up to one statement handle is considered I<active>.
+A statement handle set (stx) is an abstraction of a statement handle
+and represents an entire I<set of statement handles> for a given
+I<class of SQL queries>.  This abstraction is used because a single
+interpolation list may interpolate into any number of SQL queries
+(depending on variable input), so multiple statement handles may need
+to be managed and cached.  Typically, you do not need to call
+"prepare" directly because DBIx::Interpolate can transparently mangage
+a statement handle set (see $dbx->stx()->max_sths(10)).
+
+Up to one statement handle in a set is considered I<active>.
 Other operations performed on the statement handle set are passed to
 the active statement handle so that the statement handle set often
 looks and feels like a regular statement handle.
@@ -714,7 +716,7 @@ handle.  If no statement matching statement handle exists, a new one
 is prepared.  The used statement handle is made the active statement
 handle.  Return on error behavior is similar to DBI's execute.
 
-@list is an interpolation list (suitable for passing to dbi_interp).
+@list is an interpolation list (suitable for passing to C<dbi_interp()>).
 
 =item C<fetch...>
 
@@ -734,37 +736,16 @@ This module depends on SQL::Interpolate and DBI.
 
 These are more advanced examples.
 
-=head2 Preparing and reusing statement handles
-
-  # preparing and reusing statement handles
-  my $stx = $dbx->prepare();
-      # note: $stx represents a set of statement handles ($sth) for a class
-      # of queries.
-  $stx->max_sths(3);
-  for my $colors (@colorlists) {
-      $stx->execute("SELECT * FROM table WHERE color IN", $colors);
-          # note: this will transparently prepare a new $sth whenever
-          # one compatible with the given query is not cached.
-      my $ary_ref = $stx->fetchall_arrayref();
-  }
-
-The statement handle set transparently prepare statement handles if
-ever and whenever the underlying SQL string (and number of bind
-values) changes.  The size of the statement handle cache (3) may be
-configured to optimize performance on given data sets.  Compare this
-simpler and more flexible code to L<the example in
-SQL::Interpolate|SQL::Interpolate/additional_examples>.
-
 =head2 Binding variable types (DBI bind_param)
+
+Compare this much simpler code to L<the example in
+SQL::Interpolate|SQL::Interpolate/ADDITIONAL_EXAMPLES>.
 
   $dbx->selectall_arrayref(
       "SELECT * FROM mytable WHERE",
       "x=", \$x, "AND y=", sql_var(\$y, SQL_VARCHAR), "AND z IN",
       sql_var([1, 2], SQL_INTEGER)
   );
-
-Compare this much simpler code to L<the example in
-SQL::Interpolate|SQL::Interpolate/additional_examples>.
 
 =head1 DESIGN NOTES
 
@@ -848,7 +829,7 @@ Conditional macros: (made possible by late expansion of macros)
 
 =head1 CONTRIBUTORS
 
-David Manura (http://math2.org/david)--author.  The existence and
+David Manura (L<http://math2.org/david>) (author).  The existence and
 original design of this module as a wrapper around DBI was suggested
 by Jim Cromie.
 

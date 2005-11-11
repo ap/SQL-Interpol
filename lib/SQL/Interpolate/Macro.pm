@@ -8,7 +8,7 @@ BEGIN {
     SQL::Interpolate::_enable_macros();
 }
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
     sql_and
@@ -51,30 +51,62 @@ sub sql_flatten {
             sql_flatten $state || (), @$e;
         }
         elsif (ref $e eq 'ARRAY') {
-            my $complex = 0;
-            for my $o (@$e) { ref $o ne '' and do { $complex = 1; last }; }
-            if ($complex) {
-                my @newarray;
-                for my $o (@$e) {
-                    if (UNIVERSAL::isa($o, 'SQL::Interpolate::Macro')) {
-                        push @newarray, $o->expand($state);
-                    }
-                    elsif (ref $o eq 'SQL::Interpolate::SQL') {
-                        push @newarray,
-                            SQL::Interpolate::SQL->new(
-                                sql_flatten $state || (), @$o);
-                    }
-                    elsif (ref $o eq '' or
-                           ref $o eq 'SQL::Interpolate::Variable')
-                    {
-                        push @newarray, $o;
-                    }
-                    else {
-                        my $type = ref $o;
-                        _error(qq(reference type "$type" not allowed in array.));
+
+            # detect if array might contain macros
+            # and such that might need flattening
+            my $is_complex = 0;
+            IS_COMPLEX:
+            for my $e2 (@$e) {
+                my $ref2 = ref $e2;
+                if ($ref2 eq 'ARRAY') {
+                    for my $e3 (@$e2) {
+		        if (ref $e3 ne '') {
+                            $is_complex = 1; last IS_COMPLEX;
+                        }
                     }
                 }
-                \@newarray;
+        	elsif ($ref2 eq 'HASH') {
+                    for my $e3 (values %$e2) {
+		        if (ref $e3 ne '') {
+                            $is_complex = 1; last IS_COMPLEX;
+                        }
+                    }
+                }
+                elsif ($ref2 ne '') {
+                    $is_complex = 1; last IS_COMPLEX;
+                }
+            }
+
+            if ($is_complex) {
+                my @array_out = @$e;
+                for my $o_out (@array_out) {
+                    $o_out = _flatten_single($state, $o_out);
+                }
+                \@array_out;
+            }
+            else {
+                $e;
+            }
+        }
+        elsif (ref $e eq 'HASH') {
+
+            # detect if hash might contain macros
+            # and such that might need flattening
+            my $is_complex = 0;
+            IS_COMPLEX:
+            for my $e2 (values %$e) {
+                my $ref2 = ref $e2;
+                if ($ref2 ne '') {
+                    $is_complex = 1; last IS_COMPLEX;
+                }
+            }
+
+            if ($is_complex) {
+                my %hash_out = %$e;
+                for my $o_out (values %hash_out) {
+                    $o_out = _flatten_single($state, $o_out);
+                }
+                \%hash_out;
             }
             else {
                 $e;
@@ -100,6 +132,56 @@ sub sql_flatten {
     } @items;
 
     return @items;
+}
+
+# flattens an element that expands to a single
+# element (e.g. an element in an array)
+sub _flatten_single
+{
+    my($state, $o) = @_;
+    my $o_out;
+
+    # first flatten element if macro
+    if (UNIVERSAL::isa($o, 'SQL::Interpolate::Macro')) {
+        my @items = $o->expand($state);  # improve--what if macros are returned?
+        if(@items == 1) {
+            $o_out = $items[0];
+        }
+        else {
+            $o_out = SQL::Interpolate::SQL->new(@items);
+        }
+    }
+    else {
+        $o_out = $o;
+    }
+
+    if (ref $o_out eq 'SQL::Interpolate::SQL') {
+        $o_out = SQL::Interpolate::SQL->new(sql_flatten $state || (), @$o_out);
+    }
+    elsif (ref $o_out eq '' or
+           ref $o_out eq 'SQL::Interpolate::Variable')
+    {
+        # nothing
+    }
+    elsif (ref $o_out eq 'ARRAY') {
+        my @row_out = @$o_out;
+        for my $o2_out (@row_out) {
+            $o2_out = _flatten_single($state, $o2_out);
+        }
+        $o_out = \@row_out;
+    }
+    elsif (ref $o_out eq 'HASH') {
+        my %row_out = %$o_out;
+        for my $o2_out (values %row_out) {
+            $o2_out = _flatten_single($state, $o2_out);
+        }
+        $o_out = \%row_out;
+    }
+    else {
+        die "FIX:$o_out";  # unrecognized
+    }
+
+    return $o_out;
 }
 
 sub sql_and {
@@ -346,7 +428,6 @@ sub expand {
     for my $param (@params) {
         for my $entity (@{$param->[1]}) {
             if (defined $links{$entity}) {
-                #print Dumper($entity, $links{$entity}, $param), "\n";
                 push @sql_snips,
                     SQL::Interpolate::Macro::_single_link_sql(
                         $links{$entity}, $param);
@@ -464,20 +545,20 @@ __END__
 
 =head1 NAME
 
-SQL::Interpolate::Macro - Macros and SQL filters for SQL::Interpolate
+SQL::Interpolate::Macro - Macros and filters for SQL::Interpolate
 
 =head1 SYNOPSIS
 
  use SQL::Interpolate qw(:all);
  use SQL::Interpolate::Macro qw(:all);
 
- # Macros that assist in SQL building
+ # Query that uses macros that assist in SQL building:
  sql_interp 'SELECT * FROM mytable WHERE',
      sql_and( sql_if($blue,    q( color = "blue"   )),
               sql_if($shape, sql('shape =', \$shape)) ),
      'LIMIT 10';
 
- # Macros and fitlers that perform automatic table joining.
+ # Macros and filters can perform automatic table joining.
  # First specify database layout:
  my $interp = SQL::Interpolate->new(sql_rel_filter(
      sales_order      => {name => qr/([S-T])/, key => ['so_nbr']},
@@ -500,29 +581,43 @@ SQL::Interpolate::Macro - Macros and SQL filters for SQL::Interpolate
 =head1 DESCRIPTION
 
 This module provides macro and filter capabilities to further simplify
-the construction of SQL queries using SQL::Interpolate.  Various
-macros and filters are included as well as a framework for writing
-your own.
+the construction of SQL queries using
+L<SQL::Interpolate|SQL::Interpolate> and
+L<DBIx::Interpolate|DBIx::Interpolate> (please read the documentation
+on those two modules for background).  Various macros and filters are
+included as well as a framework for writing your own.
 
-Macros are objects derived from SQL::Interpolate::Macro and which
-expand to other interpolation list elements (strings, variable
-references, macro objects, etc.) before interpolation.  Macros may
-also exist as a convenience as "stringified macros" within strings
-(e.g. "WHERE LINK(AB,BC) AND x=y"), and these are expanded into real
-macro objects (e.g. 'WHERE ', link('AB','BC'), ' AND x=y').  Also, if
-enabled, source filtering internally converts sql// quotes into macro
-objects.
+Macros are objects that expand into an ordinary interpolation list
+via the C<sql_flatten()> function:
 
-Macro expansion is performed by the C<sql_flatten()> function, which is
-called internally by C<sql_interp()> if macros are enabled.  The process
-can be recursive since the expansion of a macro may contain other
-(e.g. nested) macros.
+  my @items = sql_flatten sql_and('X=Y', sql('Z=', 2))
+  # RESULT: @items = '(', 'X=Y', 'AND', 'Z=', \2, ')'
 
-An I<SQL filter> is an object derived from
-SQL::Interpolate::SQLFilter and is used by sql_flatten()
+Macros are derived from SQL::Interpolate::Macro.  Macros may also
+exist as a convenience as "stringified macros," which are strings
+that filters may expand into real macro objects:
+
+  $interp->sql_flatten('WHERE LINK(AB,BC) AND x=y')
+  $interp->sql_flatten('WHERE', link('AB','BC'), 'AND x=y')  # equivalent
+
+Also, source filtering, if enabled, internally converts sql// quotes
+into macro objects as well.
+
+An I<SQL filter> is an object used to by C<sql_flatten()>
 to assist in macro expansion and/or filtering of SQL text.  The
 filtering on SQL text can occur before and/or after the SQL fragments
 are interpolated into a single string.
+
+  my $interp = SQL::Interplate->new( funny_english_filter() );
+  $interp->sql_flatten('WHERE the value is', \2)
+  OUTPUT: ('WHERE x =', \2)
+
+Filter objects are derived from SQL::Interpolate::SQLFilter.
+
+C<sql_flatten()> is not normally called directly but rather is
+internally by C<sql_interp()> iff macros are enabled.  The process can
+be recursive since the expansion of a macro may contain other
+(e.g. nested) macros.
 
 =head2 Motivation
 
@@ -534,12 +629,12 @@ example,
 
 If @conditions > 0, this expands to
 
-  'x=2 OR', '(', $conditions[0], 'AND', $conditions[1], 'AND', ...., ')'
+  sql_interp 'x=2 OR', '(', $conditions[0], 'AND',
+                            $conditions[1], 'AND', ...., ')';
 
-If @conditions == 0, this expands correctly to
+If @conditions == 0, this expands to
 
-  "x=2 AND", "1=1"
-  # equivalent to "x=2"
+  sql_interp "x=2 AND", "1=1";  # equivalent to "x=2"
 
 since
 
@@ -588,8 +683,8 @@ calls the macro function but rather later during the execution of
 C<sql_interp()>.
 
 (1) if the macro expansion needs data that is available only to an
-instance of SQL::Interpolate (e.g. a database handle that is interrogated
-to generate database-dependent SQL) or
+instance of SQL::Interpolate (e.g. a database handle that is
+interrogated to generate database-dependent SQL) or
 
 (2) to support recursive macros properly, e.g.
 
@@ -606,7 +701,7 @@ to generate database-dependent SQL) or
 Notice how the expansion in the last example must be
 done outside-to-in rather inside-to-out.
 
-The framework can be used as follows.
+A macro may be defined as follows.
 
   # helper function for simpler syntax
   sub myparen { return MyParen->new(@_); }
@@ -708,10 +803,11 @@ other types of elements.
  my @list = sql_flatten sql/SELECT * FROM mytable where x=$x/;
  # OUTPUT: @list = ('SELECT * FROM mytable where x=', \$x);
 
-This function takes the same type of input as sql_interp, and, in
-fact, sql_interp uses it to preprocess input.  This function is called
-internally by sql_interp() if you use SQL::Interpolate::Macro.
-Therefore you would rarely need to call it directly.
+This function takes the same type of input as C<sql_interp()>, and, in
+fact, C<sql_interp()> uses it to preprocess input.  This function is
+called internally by C<sql_interp()> if you use
+SQL::Interpolate::Macro.  Therefore you would rarely need to call it
+directly.
 
 =back
 
@@ -943,8 +1039,9 @@ C<sql_interp()> is processed.
 
   $macro = sql_rel($alias)
 
-Creates a macro object (SQL::Interpolate::Rel) that expands to a table and alias
-definition based on the database description given in C<sql_rel_filter()>.
+Creates a macro object (SQL::Interpolate::Rel) that expands to a table
+and alias definition based on the database description given in
+C<sql_rel_filter()>.
 
 See C<sql_rel_filter()> above for details.
 
@@ -996,7 +1093,8 @@ during expansion.  This method is optional.
       }
   }
 
-One use of filter_text_fragment is to expand any macros embedded inside strings.
+One use of filter_text_fragment is to expand any macros embedded
+inside strings.
 
   "SELECT REL(AB), REL(BC) ..."
 
@@ -1074,16 +1172,18 @@ This macro facilities are still a bit under development, so interfaces
 could change and may particularly affect you if you are writing your
 own macros.
 
-The utility of macros over just plain SQL has been questioned.  A healthy
-balance can probably be made: use macros only when they are elucidate rather
-than obscure and when they improve robustness and simplicity of the syntax.
+The utility of macros over just plain SQL has been questioned.  A
+healthy balance can probably be made: use macros only when they are
+elucidate rather than obscure and when they improve robustness and
+simplicity of the syntax.
 
 =head2 Proposed Enhancements
 
-REL(AB,BC) could be expanded into an "x as AB JOIN y as BC on condition" or
-"x as AB JOIN y as BC USING(...)"  Do all major databases support this syntax?
-The juxtaposition of the JOIN and the linking condition could eliminate the
-need for the separate LINK(...) macro:
+REL(AB,BC) could be expanded into an "x as AB JOIN y as BC on
+condition" or "x as AB JOIN y as BC USING(...)"  Do all major
+databases support this syntax?  The juxtaposition of the JOIN and the
+linking condition could eliminate the need for the separate LINK(...)
+macro:
 
   SELECT * FROM REL(AB,BC) WHERE A = ?
 
@@ -1094,7 +1194,7 @@ Other table join improvements
 
 =head1 CONTRIBUTORS
 
-David Manura (http://math2.org/david)--author.
+David Manura (L<http://math2.org/david>) (author).
 Feedback incorporated from Mark Stosberg on table linking, SQL LIMIT,
 and things.
 

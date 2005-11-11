@@ -182,8 +182,8 @@
 
 	## SQL::Interpolate
 
-	This module has simplified, and it incorporates defect
-	corrections and style improvements.
+	This module has been simplified, and it incorporates
+	defect corrections and style improvements.
 
 	- Fixed ("x IN", []) to return "1=0" not "1=1".
 
@@ -240,3 +240,25 @@
 	## SQL::Interpolate::Filter
 
 	- sql// objects now transform into calls to make_sql().
+
+0.33	2005-11-10
+
+	## SQL::Interpolate
+
+	- Build.PL - fixed version syntax so that META.yml is valid.
+
+	- Added support for result sets:
+	  [[1, 2], [3, 4]], 'UNION', [{x => 10, y > 11}, {x => 12, y => 13}]
+
+	- Added support for temporary table references:
+	  "SELECT * FROM", [[1, 2], [3, 4]], 'JOIN',
+	                   [{x => 10, y > 11}, {x => 12, y => 13}]
+
+	- Added support for "IS NULL" in
+	    IN:  "WHERE", {bla => undef}
+	    OUT: "WHERE bla IS NULL"
+	  Recommended by (slaven) in
+	  http://rt.cpan.org/NoAuth/Bug.html?id=11810
+
+	- POD improvements in all modules.
+

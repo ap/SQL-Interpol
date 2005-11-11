@@ -9,7 +9,7 @@ use Text::Balanced qw/extract_quotelike
                       extract_variable
                       extract_codeblock/;
 
-our $VERSION = '0.32';
+our $VERSION = '0.33';
 
 # Source filter.
 # Note: this could be improved as done in the POD of the development 2.0 version of
@@ -166,6 +166,7 @@ SQL::Interpolate::Filter - Source filtering for SQL::Interpolate
 
 =head1 SYNOPSIS
 
+  # This first line enables source filtering.
   use SQL::Interpolate FILTER => 1, qw(:all);
   
   ($sql, @bind) = sql_interp sql[
@@ -183,21 +184,24 @@ SQL::Interpolate::Filter - Source filtering for SQL::Interpolate
       }
   ];
 
+  # Each result above is suitable for passing to DBI:
+  my $res = $dbh->selectall_arrayref($sql, undef, @bind);
+
 =head1 DESCRIPTION
 
-This module adds source filtering capability to SQL::Interpolate.
-The source filtering option provides Perl an additional quote-like
-operator (see L<perlop>) denoted sql//.  The quote can contain
-SQL and Perl variables.
+This module adds source filtering capability to the
+L<SQL::Interpolate|SQL::Interpolate> and
+L<DBIx::Interpolate|DBIx::Interpolate> modules.  The source filtering
+option provides Perl an additional quote-like operator (see L<perlop>)
+denoted sql//.  The quote can contain SQL and Perl variables:
 
   sql/SELECT * FROM mytable WHERE x = $x/;
 
-Source filtering will transform this construct into a constructor for
-a macro object that simply contains the filtered interpolation list:
+Source filtering will transform this construct into an sql() object
+containing the filtered interpolation list:
 
-  SQL::Interpolate::Filter::_make_sql("SELECT * FROM mytable WHERE x = ", \$x);
+  sql("SELECT * FROM mytable WHERE x = ", \$x);
 
-The macro expands into the contained interpolation list,
 which C<sql_interp> (or C<dbi_interp>) can then interpolate as usual:
 
   "SELECT * FROM mytable WHERE x = ?", ($x)
@@ -207,7 +211,8 @@ which C<sql_interp> (or C<dbi_interp>) can then interpolate as usual:
 To enable the quote-like sql// operator, add a "FILTER => 1" to your use
 statement:
 
-  use SQL::Interpolate FILTER => 1, qw(:all);
+  use SQL::Interpolate  FILTER => 1, qw(:all);  # or
+  use DBIx::Interpolate FILTER => 1, qw(:all);
 
 Just as it is possible to do with q// or qq// operators, you can use
 various delimiters on the sql// operator, such as
@@ -217,9 +222,8 @@ various delimiters on the sql// operator, such as
   sql<SELECT * from mytable WHERE x = $x>
   sql/SELECT * from mytable WHERE x = $x/
 
-SQL:::Interpolate::SQL objects (and sql// operators representing them)
-come with a string concatenation operator (.), so you can
-do things like
+sql() objects (and sql// string-like operators representing them) come
+with a string concatenation operator (.), so you can do things like
 
   sql[
     SELECT partnum, desc, price, stock
@@ -229,34 +233,32 @@ do things like
 =head2 Security notes
 
 An sql// object concatenated with a string will append the string
-verbatim into your result SQL.  Future versions of SQL::Interpolate
-may throw an error if one attempts to concatenate an sql// object with
-a string.  It's a better idea to do this if you must:
+verbatim into your result SQL:
 
-  $dbx->do(sql[UPDATE mytable SET y = 0 WHERE x = ] . sql[$name]);
+  $dbx->do(sql[UPDATE mytable SET y = 0 WHERE x = ] . $name);  # not good
 
-or simply
+Future versions of SQL::Interpolate may throw an error if one attempts
+to do this.  If you want the value to bind, you must interpolate:
 
+  $dbx->do(sql[UPDATE mytable SET y = 0 WHERE x = ] . sql[$name]);  # or
   $dbx->do(sql[UPDATE mytable SET y = 0 WHERE x = $name]);
-
-because then the $name value will be properly interpolated.
 
 =head2 Examples
 
  INPUT:  sql[WHERE one=$x AND $y]
- OUTPUT: "WHERE one=", \$x, " AND ", $y
+ OUTPUT: sql("WHERE one=", \$x, " AND ", $y)
 
  INPUT:  sql[INSERT INTO mytable @x]
- OUTPUT: "INSERT INTO mytable ", \@x
+ OUTPUT: sql("INSERT INTO mytable ", \@x)
 
  INPUT:  sql[INSERT INTO mytable [1, 2]]
- OUTPUT: "INSERT INTO mytable ", [1, 2]
+ OUTPUT: sql("INSERT INTO mytable ", [1, 2])
 
  INPUT   sql[INSERT INTO mytable %x]
- OUTPUT: "INSERT INTO mytable ", \%x
+ OUTPUT: sql("INSERT INTO mytable ", \%x)
 
  INPUT:  sql[INSERT INTO mytable {one => 1, two => 2}]
- OUTPUT: "INSERT INTO mytable ", {one => 1, two => 2}
+ OUTPUT: sql("INSERT INTO mytable ", {one => 1, two => 2})
 
 =head2 Exports and Use Parameters
 

@@ -1,13 +1,11 @@
 # Tests of SQL::Interpolate
-#
-# Note: Perl does not define an ordering on hash keys, so these tests
-# take care not to assume a particular order (e.g. see $h_keys and $h_values)
 
 use strict;
+use warnings;
 use Test::More 'no_plan';
-use Data::Dumper;
 use SQL::Interpolate qw(:all);
 use SQL::Interpolate::Macro qw(:all);
+use Data::Dumper;
 BEGIN {require 't/lib.pl';}
 
 # test of use parameters
@@ -28,20 +26,53 @@ my $v2 = ['one', sql('two')];
 my $h0 = {};
 
 my $h = {one => 1, two => 2};
-my $h_keys   = [keys %$h];
-my $h_values = [values %$h];
+my $hi = make_hash_info($h);
 
 my $var1 = sql_var(\$x);
 my $var2 = sql_var(\$x, type => 1);
 
-my $h2 = {one => 1, two => $var2, three => sql('3')};
-my $h2_keys   = [keys %$h2];
-my $h2_values = [values %$h2];
-my $h2_places = [map {$_ eq 'three' ? '3' : '?'} @$h2_keys];
-my $h2_values2 = [map {
-    $_ eq 'one' ? [1, sql_var(\1)] :
-    $_ eq 'two' ? [${$var2->{value}}, $var2] : die
-} grep {$_ ne 'three'} @$h2_keys];
+my $h2i = make_hash_info(
+    { one => 1, two => $var2, three => sql('3') },
+    { one => '?', two => '?', three => '3' },
+    { one => [[1, sql_var(\1)]], two => [[${$var2->{value}}, $var2]] }
+);
+
+# Returns structure containing info on the hash.
+# This info is useful in the sql_interp tests.
+# Note: Perl does not define an ordering on hash keys, so these tests
+# take care not to assume a particular order.
+sub make_hash_info {
+    my ($hashref, $place_of, $bind_of) = @_;
+    my $info = {
+        hashref => $hashref,
+        keys    => [ keys %$hashref             ],
+        values  => [ values %$hashref           ],
+        places  => [ @$place_of{keys %$hashref} ],
+        binds   => [ map {defined $_ ? @$_ : ()}
+                         @$bind_of{ grep { exists $bind_of->{$_} } keys %$hashref} ]
+    };
+    return $info;
+}
+
+# returns the values in the given hash ordered by the given keys.
+# Helper function for the sql_interp tests. 
+sub order_keyed_values {
+    my ($ordered_keys, %value_for) = @_;
+    my @values = @value_for{@$ordered_keys};
+    return @values;
+}
+
+# trivial macro that expands identically to its parameter list
+{
+    package IdentityMacro;
+    use base 'SQL::Interpolate::Macro';
+    sub new {
+        my($class, @list) = @_;
+        return bless \@list, $class;
+    }
+    sub expand { return @{ $_[0] }; }
+}
+sub identity_macro { return IdentityMacro->new(@_); }
 
 #== trivial cases
 interp_test([],
@@ -56,12 +87,13 @@ interp_test([\$x],
 interp_test([sql()],
             [''],
             'sql()');
-
-# improve: call with with macros disabled
 interp_test([SQL::Interpolate::SQL->new(\$x)],
             [' ?', $x],
             'SQL::Interpolate::SQL->new(scalarref)');
 
+# improve: call with with macros disabled
+
+# test with sql()
 interp_test([sql('test')],
             ['test'],
             'sql(string))');
@@ -97,12 +129,13 @@ interp_test(['INSERT INTO mytable', $h0],
             ['INSERT INTO mytable () VALUES()'],
             'INSERT hashref of size = 0');
 interp_test(['INSERT INTO mytable', $h],
-            ["INSERT INTO mytable ($h_keys->[0], $h_keys->[1]) VALUES(?, ?)", @$h_values],
+            ["INSERT INTO mytable ($hi->{keys}[0], $hi->{keys}[1]) VALUES(?, ?)",
+                 @{$hi->{values}}],
             'INSERT hashref of size > 0');
-interp_test(['INSERT INTO mytable', $h2],
-            ["INSERT INTO mytable ($h2_keys->[0], $h2_keys->[1], $h2_keys->[2]) " .
-             "VALUES($h2_places->[0], $h2_places->[1],  $h2_places->[2])",
-             @$h2_values2],
+interp_test(['INSERT INTO mytable', $h2i->{hashref}],
+            ["INSERT INTO mytable ($h2i->{keys}[0], $h2i->{keys}[1], $h2i->{keys}[2]) " .
+             "VALUES($h2i->{places}->[0], $h2i->{places}->[1],  $h2i->{places}->[2])",
+             @{$h2i->{binds}}],
             'INSERT hashref of sql_var + sql()');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
@@ -147,7 +180,7 @@ interp_test(['WHERE field in', $v0],
 
 # SET
 interp_test(['UPDATE mytable SET', $h],
-            ["UPDATE mytable SET $h_keys->[0]=?, $h_keys->[1]=?", @$h_values],
+            ["UPDATE mytable SET $hi->{keys}[0]=?, $hi->{keys}[1]=?", @{$hi->{values}}],
             'SET hashref');
 interp_test(['UPDATE mytable SET',
                 {one => 1, two => $var2, three => sql('3')}],
@@ -161,14 +194,24 @@ interp_test(['WHERE', $h0],
             ['WHERE 1=1'],
             'WHERE hashref of size = 0');
 interp_test(['WHERE', $h],
-            ["WHERE ($h_keys->[0]=? AND $h_keys->[1]=?)", @$h_values],
+            ["WHERE ($hi->{keys}[0]=? AND $hi->{keys}[1]=?)", @{$hi->{values}}],
             'WHERE hashref of size > 0');
-interp_test(['WHERE', {x => 1, y=>sql('2')}],
-            ['WHERE (y=2 AND x=?)', 1],
+my $h2bi = make_hash_info(
+    {x => 1, y => sql('2')},
+    {x => 'x=?', y => 'y=2'},
+    {x => [1]}
+);
+interp_test(['WHERE', $h2bi->{hashref}],
+            ["WHERE ($h2bi->{places}[0] AND $h2bi->{places}[1])", @{$h2bi->{binds}}],
             'WHERE hashref sql()');
-interp_test(['WHERE', \$x],
-            ['WHERE ?', $x],
-            'WHERE scalarref');
+my $h2ci = make_hash_info(
+    {x => 1, y => undef},
+    {x => 'x=?', y => 'y IS NULL'},
+    {x => [1]}
+);
+interp_test(['WHERE', $h2ci->{hashref}],
+            ["WHERE ($h2ci->{places}[0] AND $h2ci->{places}[1])", @{$h2ci->{binds}}],
+            'WHERE hashref of NULL');
 
 # WHERE x=
 interp_test(['WHERE x=', \$x],
@@ -186,20 +229,68 @@ interp_test(['WHERE', {x => $x, y => $var2}, 'AND z=', \$x],
             ['WHERE (y= ? AND x=?) AND z= ?',
                 [${$var2->{value}}, $var2], [$x, sql_var(\$x)], [$x, sql_var(\$x)]],
             'WHERE hashref of \$x, sql_var typed');
-my $h5 = {x => $x, y => [3, $var2]};
-my $h5_keys = [keys %$h5];
-my $h5_places = [map {$_ eq 'x' ? 'x=?' : 'y IN (?,  ?)'} @$h5_keys];
-my $h5_values = [map {$_ eq 'x' ? [$x, sql_var(\$x)] : ([3, sql_var(\3)], [${$var2->{value}}, $var2])} @$h5_keys];
-interp_test(['WHERE', $h5],
-            ["WHERE ($h5_places->[0] AND $h5_places->[1])", @$h5_values],
+my $h5i = make_hash_info(
+    {x => $x, y => [3, $var2]},
+    {x => 'x=?', y => 'y IN (?,  ?)'},
+    {x => [[$x, sql_var(\$x)]], y => [[3, sql_var(\3)], [${$var2->{value}}, $var2]]}
+);
+interp_test(['WHERE', $h5i->{hashref}],
+            ["WHERE ($h5i->{places}[0] AND $h5i->{places}[1])", @{$h5i->{binds}}],
             'WHERE hashref of arrayref of sql_var typed');
 interp_test(['WHERE', {x => $x, y => sql('z')}],
             ['WHERE (y=z AND x=?)', $x],
             'WHERE hashref of \$x, sql()');
 
+# table references
+error_test(['FROM', []], qr/table reference has zero rows/, 'v 0');
+error_test(['FROM', [[]]], qr/table reference has zero columns/, 'vv 1 0');
+error_test(['',     [[]]], qr/table reference has zero columns/, 'vv 1 0 (resultset)');
+error_test(['FROM', [{}]], qr/table reference has zero columns/, 'vh 1 0');
+error_test(['',     [{}]], qr/table reference has zero columns/, 'vh 1 0 (resultset)');
+interp_test(['FROM', [[1]]], ['FROM (SELECT ?) AS tbl0', 1], 'vv 1 1');
+interp_test(['',     [[1]]], ['(SELECT ?)', 1], 'vv 1 1 (resultset)');
+interp_test(['FROM', [{a => 1}]], ['FROM (SELECT ? AS a) AS tbl0', 1], 'vh 1 1');
+interp_test(['',     [{a => 1}]], ['(SELECT ? AS a)', 1], 'vh 1 1 (resultset)');
+interp_test(['FROM', [[1,2]]], ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'vv 1 2');
+interp_test(['FROM', [$h]], ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1]) AS tbl0",
+    @{$hi->{values}}], 'vh 1 2');
+interp_test(['',     [$h]], ["(SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1])",
+    @{$hi->{values}}], 'vh 1 2 (resultset)');
+interp_test(['FROM', [[1,2],[3,4]]],
+    ['FROM (SELECT ?, ? UNION ALL SELECT ?, ?) AS tbl0', 1, 2, 3, 4], 'vv 2 2');
+interp_test(['', [[1,2],[3,4]]],
+    ['(SELECT ?, ? UNION ALL SELECT ?, ?)', 1, 2, 3, 4], 'vv 2 2 (resultset)');
+interp_test(['FROM', [$h,$h]],
+    ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1] UNION ALL SELECT ?, ?) AS tbl0",
+    @{$hi->{values}}, @{$hi->{values}}], 'vh 2 2');
+interp_test(['', [$h,$h]],
+    ["(SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1] UNION ALL SELECT ?, ?)",
+    @{$hi->{values}}, @{$hi->{values}}], 'vh 2 2 (resultset)');
+interp_test(['FROM', [[1]], 'JOIN', [[2]]],
+    ['FROM (SELECT ?) AS tbl0 JOIN (SELECT ?) AS tbl1', 1, 2], 'vv 1 1 join vv 1 1');
+interp_test(['FROM', [[sql(1)]]], ['FROM (SELECT 1) AS tbl0'], 'vv 1 1 of sql(1)');
+interp_test(['', [[sql(1)]]], ['(SELECT 1)'], 'vv 1 1 of sql(1) (resultset)');
+interp_test(['FROM', [{a => sql(1)}]], ['FROM (SELECT 1 AS a) AS tbl0'], 'vh 1 1 of sql(1)');
+interp_test(['FROM', [[sql(\1)]]], ['FROM (SELECT  ?) AS tbl0', 1], 'vv 1 1 of sql(\1)');
+interp_test(['FROM', [[sql('1=', \1)]]],
+    ['FROM (SELECT 1= ?) AS tbl0', 1], 'vv 1 1 of sql(s,\1)');
+interp_test(['FROM', [ identity_macro([1,2]) ] ],
+    ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'v of identity_macro(v 2)');
+interp_test(['FROM', [ identity_macro($h) ] ],
+    ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1]) AS tbl0", @{$hi->{values}}],
+    'v of identity_macro(h 2)');
+interp_test(['FROM', [ [identity_macro(1),2] ] ],
+    ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'vv 1 2 of identity_macro');
+interp_test(['FROM', [[1]], ' AS mytable'],
+    ['FROM (SELECT ?) AS mytable', 1], 'vv 1 1 with alias');
+interp_test(['FROM', [[undef]]],
+    ['FROM (SELECT ?) AS tbl0', undef], 'vv 1 1 of undef');
+interp_test(['FROM', [{a => undef}]],
+    ['FROM (SELECT ? AS a) AS tbl0', undef], 'vh 1 1 of undef');
+
 # error handling
-error_test(['SELECT', []], qr/unrecognized.*array.*select/i, 'err1');
-error_test(['IN', {}], qr/unrecognized.*hash.*in/i, 'err2');
+#OLD: error_test(['SELECT', []], qr/unrecognized.*array.*select/i, 'err1');
+#OLD: error_test(['IN', {}], qr/unrecognized.*hash.*in/i, 'err2');
 
 sub interp_test
 {
