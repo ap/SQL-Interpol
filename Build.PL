@@ -5,7 +5,8 @@ Module::Build->new(
     license => 'perl',
     recommends => {
         Text::Balanced => '1.87',
-        Filter::Simple => 0
+        Filter::Simple => 0,
+        Scalar::Util => 0
     },
     dist_author => 'David Manura (http://math2.org/david/contact)'
 )->create_build_script();

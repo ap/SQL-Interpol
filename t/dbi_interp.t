@@ -5,11 +5,13 @@ use Test::More 'no_plan';
 use Data::Dumper;
 use DBIx::Interpolate qw(:all);
 
-my $fake_dbh = bless {Driver => {Name => 'mysql'}}, 'DBI::db';
+sub new_fake_db {
+    return bless {Driver => {Name => 'mysql'}}, 'DBI::db';
+}
 
+my $fake_dbh = new_fake_db();
 
 my $dbx = new DBIx::Interpolate($fake_dbh);
-my $dbx2 = new DBIx::Interpolate();
 my $dbi_interp = $dbx->make_dbi_interp();
 my $dbi_interp2 = make_dbi_interp();
 my $sql_interp = $dbx->make_sql_interp();
@@ -17,8 +19,7 @@ my $sql_interp2 = make_sql_interp();
 
 my $x = 5;
 
-# dbh()
-is(ref($dbx->dbh()), 'DBI::db', 'dbh');
+ok($dbx->isa('DBI::db'), 'dbh');
 
 # connect()
 # no tests currently

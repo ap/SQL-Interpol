@@ -5,9 +5,9 @@ use warnings;
 use Carp;
 use DBI;
 use SQL::Interpolate qw(:all);
-use base qw(Exporter SQL::Interpolate);
+use base qw(Exporter DBI);
 
-our $VERSION = '0.33';
+our $VERSION = '0.40_03';
 
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
@@ -18,21 +18,10 @@ our %EXPORT_TAGS = (all => [qw(
 )]);
 our @EXPORT_OK = @{$EXPORT_TAGS{all}};
 
-sub _wrap(&);
+our @CARP_NOT =
+    qw(DBIx::Interpolate DBIx::Interpolate::db DBIx::Interpolate::STX);
 
-# internal helper function to filter use parameters
-sub _filter_params {
-    my ($skip_names, $skip_keys, @parts) = @_;
-    my @out;
-    my %skip_names = map {($_=>1)} @$skip_names;
-    my %skip_keys  = map {($_=>1)} @$skip_keys;
-    while (@parts) {
-        if ($skip_names{$parts[0]})   { shift @parts; }
-        elsif ($skip_keys{$parts[0]}) { shift @parts; shift @parts; }
-        else                          { push @out, shift @parts; }
-    }
-    return @out;
-}
+sub _wrap(&);
 
 sub import {
     my @params = @_;
@@ -49,44 +38,128 @@ sub import {
     goto &SQL::Interpolate::import; # @_
 }
 
+# internal helper function to filter use parameters.
+# called only by import().
+sub _filter_params {
+    my ($skip_names, $skip_keys, @parts) = @_;
+    my @out;
+    my %skip_names = map {($_=>1)} @$skip_names;
+    my %skip_keys  = map {($_=>1)} @$skip_keys;
+    while (@parts) {
+        if    ($skip_names{$parts[0]}) { shift @parts; }
+        elsif ( $skip_keys{$parts[0]}) { shift @parts; shift @parts; }
+        else                           { push @out, shift @parts; }
+    }
+    return @out;
+}
+
+sub key_field {
+    my $key = shift;
+    return bless \$key, "DBIx::Interpolate::Key";
+}
+
+sub attr {
+    return bless {@_}, "DBIx::Interpolate::Attr";
+}
+
+sub dbi_interp {
+    return DBIx::Interpolate::db::dbi_interp(@_);
+}
+
+sub make_dbi_interp {
+    return DBIx::Interpolate::db::make_dbi_interp(@_);
+}
+
+sub new {
+    shift;
+    return DBIx::Interpolate::db->new(@_);
+}
+
+sub _wrap(&) {
+    my $code = shift;
+    my $x;
+    my @x;
+    my $want = wantarray();
+    eval {
+        if ($want) { @x = $code->(); }
+        else       { $x = $code->(); }
+    };
+    if ($@) { croak $@; }
+    return $want ? @x : $x;
+}
+
+#####
+package DBIx::Interpolate::db;
+use strict;
+use warnings;
+use Carp;
+use base qw(DBI::db);
+use Scalar::Util qw( weaken );
+
+our @CARP_NOT = @DBIx::Interpolate::CARP_NOT;
+
+my $priv = 'private_DBIxInterpolate';
+
 sub new {
     my $class = shift;
     my $dbh;
-    if (UNIVERSAL::isa($_[0], 'DBI:db')) {
+
+    if (UNIVERSAL::isa($_[0], 'DBI::db')) {
         $dbh = shift;
     }
-    elsif (ref($_[0]) eq 'ARRAY') {
+    elsif (ref $_[0] eq 'ARRAY') {
         $dbh = DBI->connect(@{shift @_});
+        return if ! defined $dbh;
+    }
+    else {
+        croak 'DBIx::Interpolate::db::new() not passed database connection';
     }
 
-    my $self = SQL::Interpolate->new(($dbh ? $dbh : ()), @_);
+    my $interp = SQL::Interpolate->new(($dbh || ()), @_);
+    my $self = $dbh;
     bless $self, $class;
-    $self->{stx} = $self->prepare();
+    my $private = $self->{$priv} = {};
+    $private->{stx} = $self->prepare_i();
+    $private->{interp} = $interp;
+
+    # weaken circular references to allow garbage collection
+    weaken $private->{stx}->{dbx};
+    weaken $private->{interp}->{dbh};
 
     return $self;
 }
+
+#sub DESTROY {
+#    my ($self) = @_;
+#    $self->SUPER::DESTROY();
+#}
 
 sub connect {
     my $class = shift;
     my $self;
     eval {
         my $dbh = DBI->connect(@_);
-        return if !$dbh;
+        return if ! $dbh;
         $self = DBIx::Interpolate->new($dbh);  #Q: OK?
     };
     if ($@) { croak $@; }
     return $self;
 }
 
-sub dbh {
-    my $self = shift;
-    return $self->{dbh};
-}
+# removed in 0.40:
+#sub dbh
+
 
 # new in 0.31
 sub stx {
     my $self = shift;
-    return $self->{stx};
+    return $self->{$priv}->{stx};
+}
+
+# new in 0.40
+sub interp {
+    my $self = shift;
+    return $self->{$priv}->{interp};
 }
 
 sub dbi_interp {
@@ -94,10 +167,10 @@ sub dbi_interp {
     my $attr;
     my @args = grep {
         my $save = 1;
-        if (ref($_) eq 'SQL::Interpolate::Key') {
+        if (ref($_) eq 'DBIx::Interpolate::Key') {
             $key = $_; $save = 0;
         }
-        elsif (ref($_) eq 'SQL::Interpolate::Attr') {
+        elsif (ref($_) eq 'DBIx::Interpolate::Attr') {
             $attr = {%$_}; $save = 0;
         }
         $save;
@@ -118,79 +191,96 @@ sub make_dbi_interp {
     return $interp;
 }
 
-sub key_field {
-    my $key = shift;
-    return bless \$key, "SQL::Interpolate::Key";
+sub sql_interp {
+    my (@params) = @_;
+    if (UNIVERSAL::isa($_[0], 'DBIx::Interpolate::db')) {
+        my $self = shift;
+        return SQL::Interpolate::sql_interp($self->interp(), @_);
+    }
+    else {
+        return SQL::Interpolate::sql_interp(@_);
+    }
+}
+sub make_sql_interp {
+    my (@params) = @_;
+
+    my $interp = sub {
+        return sql_interp(@params, @_);
+    };
+    return $interp;
 }
 
-sub attr {
-    return bless {@_}, "SQL::Interpolate::Attr";
-}
 
 # based on function in DBI
-sub _do_selectrow {
+sub _do_selectrow_i {
     my ($self, $method, @list) = @_;
 
-    #my ($method, $dbh, $stmt, $attr, @bind) = @_;
     #my $sth = $dbh->prepare($stmt, $attr) or return;
     #_do_execute($sth, @bind) or return;
-    $self->{stx}->execute(@list) or return;
-    my $sth = $self->{stx}->sth();
+    my $stx = $self->{$priv}->{stx};
+    $stx->execute_i(@list) or return;
+    my $sth = $stx->sth();
     my $row = $sth->$method() and $sth->finish;
     return $row;
 }
 
-sub prepare {
+# new in 0.40
+sub prepare_i {
     my ($self) = @_;
     return DBIx::Interpolate::STX->new($self);
 }
 
-sub do {
+# new in 0.40
+sub do_i {
     my ($self, @list) = @_;
     return _wrap {
         # based on DBI::do
         #   my $sth = $dbh->prepare($sql, $attr) or return undef;
         #   _do_execute(@bind) or return undef;
-
-        $self->{stx}->execute(@list) or return undef;
-        my $sth = $self->{stx}->sth();
+        my $stx = $self->{$priv}->{stx};
+        $stx->execute_i(@list) or return undef;
+        my $sth = $stx->sth();
         my $rows = $sth->rows;
         return ($rows == 0) ? "0E0" : $rows;
     };
 }
 
-sub selectrow_array {
+# new in 0.40
+sub selectrow_array_i {
     my ($self, @list) = @_;
     my $want = wantarray;
     return _wrap {
         # based on DBI::selectrow_array
 
-        my $row = $self->_do_selectrow('fetchrow_arrayref', @list)
+        my $row = $self->_do_selectrow_i('fetchrow_arrayref', @list)
             or return;
         return $row->[0] unless $want;
         return @$row;
     };
 }
 
-sub selectrow_arrayref {
+# new in 0.40
+sub selectrow_arrayref_i {
     my ($self, @list) = @_;
     return _wrap {
         # based on DBI::selectrow_arrayref
 
-        return $self->_do_selectrow('fetchrow_arrayref', @list);
+        return $self->_do_selectrow_i('fetchrow_arrayref', @list);
     };
 }
 
-sub selectrow_hashref {
+# new in 0.40
+sub selectrow_hashref_i {
     my ($self, @list) = @_;
     return _wrap {
         # based on DBI::selectrow_hashref
 
-        return $self->_do_selectrow('fetchrow_hashref', @list);
+        return $self->_do_selectrow_i('fetchrow_hashref', @list);
     };
 }
 
-sub selectall_arrayref {
+# new in 0.40
+sub selectall_arrayref_i {
     my ($self, @list) = @_;
     return _wrap {
         # improve: no need to to a full dbi_interp call here and elsewhere
@@ -200,8 +290,9 @@ sub selectall_arrayref {
         #   my $sth = $dbh->prepare($sql, $attr) or return;
         #   _do_execute($sth, @bind) or return;
 
-        $self->{stx}->execute(@list) or return;
-        my $sth = $self->{stx}->sth();
+        my $stx = $self->{$priv}->{stx};
+        $stx->execute_i(@list) or return;
+        my $sth = $stx->sth();
         # typically undef, else hash or array ref
         my $slice = $attr->{Slice};
         if (!$slice and $slice=$attr->{Columns}) {
@@ -217,7 +308,8 @@ sub selectall_arrayref {
     };
 }
 
-sub selectall_hashref {
+# new in 0.40
+sub selectall_hashref_i {
     my ($self, @list) = @_;
     return _wrap {
         #need $key_field
@@ -228,13 +320,15 @@ sub selectall_hashref {
         #   return unless $sth;
         #   _do_execute($sth, @bind) or return;
 
-        $self->{stx}->execute(@list) or return;
-        my $sth = $self->{stx}->sth();
+        my $stx = $self->{$priv}->{stx};
+        $stx->execute_i(@list) or return;
+        my $sth = $stx->sth();
         return $sth->fetchall_hashref($key_field);
     };
 }
 
-sub selectcol_arrayref {
+# new in 0.40
+sub selectcol_arrayref_i {
     my ($self, @list) = @_;
     return _wrap {
         my ($sql, $attr, @bind) = $self->dbi_interp(@list); # need $attr
@@ -244,13 +338,14 @@ sub selectcol_arrayref {
         #   return unless $sth;
         #   _do_execute($sth, @bind) or return;
 
-        $self->{stx}->execute(@list) or return;
+        my $stx = $self->{$priv}->{stx};
+        $stx->execute_i(@list) or return;
         my @columns = ($attr->{Columns}) ? @{$attr->{Columns}} : (1);
         my @values  = (undef) x @columns;
         my $idx = 0;
-        my $sth = $self->{stx}->sth();
+        my $sth = $stx->sth();
         for (@columns) {
-            $sth->bind_col($_, \$values[$idx++]) || return;
+            $sth->bind_col($_, \$values[$idx++]) or return;
         }
         my @col;
         if (my $max = $attr->{MaxRows}) {
@@ -261,19 +356,6 @@ sub selectcol_arrayref {
         }
         return \@col;
     };
-}
-
-sub _wrap(&) {
-    my $code = shift;
-    my $x;
-    my @x;
-    my $want = wantarray();
-    eval {
-        if ($want) { @x = $code->(); }
-        else       { $x = $code->(); }
-    };
-    if ($@) { croak $@; }
-    return $want ? @x : $x;
 }
 
 #old: sub _do_execute {
@@ -296,8 +378,13 @@ sub _wrap(&) {
 
 1;
 
+#####
 package DBIx::Interpolate::STX;
 use strict;
+use warnings;
+use Carp;
+
+our @CARP_NOT = @DBIx::Interpolate::CARP_NOT;
 
 sub new {
     my ($class, $dbx) = @_;
@@ -340,17 +427,17 @@ sub sths {
     return {%{$self->{sths}}};
 }
 
-sub execute {
+# renamed execute --> execute_i in 0.40
+sub execute_i {
     my ($self, @list) = @_;
-    my $dbx = $self->{dbx};
+
     return DBIx::Interpolate::_wrap {
-        my ($sql, @bind) = $dbx->dbi_interp(@list);
+        my ($sql, @bind) = $self->{dbx}->dbi_interp(@list);
         shift @bind if defined $bind[0] && ref $bind[0] eq ''; # remove any key_field()
         my $attr = shift @bind;
         my $sth = $self->{sths}->{$sql};
         if (! defined $sth) {
-	  my $dbx = $self->{dbx};
-            $sth = $dbx->dbh()->prepare($sql, $attr) or return;
+            $sth = $self->{dbx}->prepare($sql, $attr) or return;
             if (@{$self->{sql_queue}} + 1 > $self->{max_sths}) {
                 my $sql_remove = shift @{$self->{sql_queue}};
                 delete $self->{sths}->{$sql_remove};
@@ -429,155 +516,53 @@ DBIx::Interpolate - Interpolate Perl variables into SQL with DBI
   use DBI;
   use DBIx::Interpolate qw(:all);
 
-  # This basic usage is all you really need:
-  my $dbx = DBIx::Interpolate->new($dbh);  # Construct object.
-  $dbx->stx()->max_sths(10);               # Optionally enable transparent
-                                           #   statement handle caching.
-  $dbx->selectall_arrayref('               # Perform query.
-      SELECT * FROM table WHERE color IN', \@colors, '
-      AND y =', \$x, 'OR', {z => 3, w => 2}
-  );
+  my $dbx = DBIx::Interpolate->new($dbh);  
 
-  # The above is largely equivalent to filtering the parameter
-  # list through the function dbi_interp() before passing it to DBI:
-  my $ref = $dbh->selectall_arrayref(dbi_interp '
-      SELECT * FROM mytable WHERE color IN', \@colors, '
-      AND y =', \$x, 'OR', {z => 3, w => 2}
-  );
-  # dbi_interp() is a thin wrapper around the function sql_interp()
-  # (see the SQL::Interpolate module for details) except its return
-  # value is in the form DBI expects--typically ($sql, \%attr, @bind).
+  my $rv = $dbx->do_i('INSERT INTO table', \%item);
+  my $rv = $dbx->do_i('UPDATE table SET',  \%item, 'WHERE item_id <> ', \2);
+  my $rv = $dbx->do_i('DELETE FROM table WHERE item_id = ', \2);
+  
+  my $LoH = $dbx->selectall_arrayref_i('
+        SELECT * FROM table WHERE x = ', \$s, 'AND y IN', \@v
+        ,attr(Slice=>{}));
 
-  # This module is an abstraction of DBI.  This module uses an
-  # abstraction of DBI statement handles called "statement handle
-  # sets" (stx), which are each a set of statement handles
-  # for a class of queries.
-  my $stx = $dbx->prepare();      # create stx
-  for my $colors (@colorlists) {  # run some queries
-      $stx->execute("SELECT * FROM table WHERE color IN", $colors);
-          # execute() transparently prepares a new $sth whenever one
-          # compatible with the given query invocation is not cached.
-      my $ref = $stx->fetchall_arrayref();
-  }
 
 =head1 DESCRIPTION
 
-DBIx:Interpolate interpolates Perl variables into SQL statements in a
-simplified manner and passes the result to DBI.  DBIx::Interpolate
-does nothing more than bring L<SQL::Interpolate|SQL::Interpolate> and
-L<DBI|DBI> together (please read the documentation on those two
-modules for background).  The DBIx::Interpolate interface is very
-close to that of DBI.  Many methods behave like their DBI
-counterparts.  The methods differ mainly in that they expect an
-interpolation list as input:
+DBIx::Interpolate does nothing more than bring
+L<SQL::Interpolate|SQL::Interpolate> and L<DBI|DBI> together (please read the
+documentation on those two modules for background).  The DBIx::Interpolate
+interface adds some methods to the DBI interface with the "_i" suffix,
+indicating that interpolatation is performed automatically  in these cases. 
 
-  $dbx->selectall_arrayref(
-      "SELECT * from mytable WHERE height > ", \$x);
-
-rather than the typical ($statement, \%attr, @bind_values) of
-DBI:
-
-  $dbh->selectall_arrayref(
-      "SELECT * from mytable WHERE height > ?", undef, $x);
-
-=head1 INTERFACE
-
-The parameters for most DBIx::Interpolate methods are internally
-passed to C<dbi_interp()>, which is a thin wrapper around
-L<sql_interp()|SQL::Interpolate/sql_interp>.  C<dbi_interp()> accepts a
-few additional types of parameters and typically returns a parameter
-list suitable for DBI--typically ($statement, \%attr, @bind_values).
-Therefore, the previous example is equivalent to
-
-  $dbh->select_arrayref(dbi_interp
-      "SELECT * from mytable WHERE height > ", \$x );
-
-which in this particular case is equivalent to
-
-  my ($sql, @bind) = sql_interp
-      "SELECT * from mytable WHERE height > ", \$x ;
-  $dbh->selectall_arrayref($sql, undef, @bind);
-
-It is a design goal of DBIx::Interpolate to maintaining as much
-resemblance to DBI as reasonably possible.
-
-=head2 C<dbi_interp>
-
-  ($sql, $attr, @bind) = dbi_interp(@interp_list);
-  ($sql, $key_field, $attr, @bind) = dbi_interp(@interp_list);
-
-C<dbi_interp()> is a wrapper function around C<sql_interp()>.  It
-serves as an adapter that returns also the \%attr value (and sometimes
-$key_field value) so that the result can be passed directly to the DBI
-functions.
-
-In addition to the parameters accepted by
-SQL::Interpolate::sql_interp, @interp_list may contain the macros
-returned by C<attr> and C<key_field> functions.  C<dbi_interp()> will
-convert these DBI-specific objects into additional return values
-expected by certain DBI methods.  For example, selectall_hashref
-accepts an additional $key_field parameter:
-
-  $dbh->selectall_hashref($statement, $key_field, \%attr, @bind_values);
-
-C<dbi_interp()> can generate the $key_field parameter (as well as \%attr)
-as follows:
-
-  my ($sql, $key_field, $attr, @bind) = dbi_interp
-      "SELECT * FROM mytable WHERE x=", \$x,
-      key_field("y"), attr(myatt => 1)
-  # Sets
-  #   ($sql, $key_field, $attr, @bind) =
-  #       ("SELECT * FROM mytable WHERE x=?", 'y', {myatt=>1}, $x)
-
-Therefore, one may do
-
-C<dbi_interp()> is typically unnecessary to use directly since it is
-called internally by the DBI wrapper methods:
-
-  $dbx->selectall_hashref(
-      "SELECT * FROM mytable WHERE x=", \$x,
-      key_field("y"), attr(myatt => 1));
-  # same as
-  # $dbh->selectall_hashref(dbi_interp
-  #     "SELECT * FROM mytable WHERE x=", \$x,
-  #     key_field("y"), attr(myatt => 1));
-
-=head2 C<key_field>
-
-  $keyobj = key_field($key_field);
-
-Creates and returns an SQL::Interpolate::Key macro object, which if
-processed by C<dbi_interp()> will cause C<dbi_interp()> to return an extra
-$key_field value in the result so that it is suitable for passing into
-$dbh->fetchrow_hashref and related methods.
-
-  my ($sql, $key, $attr, @bind) =
-  my @params = dbi_interp "SELECT * FROM mytable", key_field('itemid');
-  $dbh->selectall_hashref(@params);
+=head1 Helper Functions you may need
 
 =head2 C<attr>
 
   $attrobj = attr(%attr);
 
-Creates and returns an SQL::Interpolate::Attr macro object, which if
-processed by C<dbi_interp()> will cause C<dbi_interp()> to add the provided
-key-value pair to the $attr hashref used by DBI methods.
+Creates and returns an DBIx::Interpolate::Attr macro object, which if
+processed by C<dbi_interp()> will cause C<dbi_interp()> to add the
+provided key-value pair to the $attr hashref used by DBI methods.
 
-  my ($sql, $attr, @bind) =
-  my @params =
+  my ($sql, $attr, @bind) = my @params =
     dbi_interp "SELECT a, b FROM mytable", attr(Columns=>[1,2]);
   $dbh->selectcol_arrayref(@params);
 
-=head2 C<make_dbi_interp>
+=head2 C<key_field>
 
-  $dbi_interp = make_dbi_interp(@params);          # functional
-  $dbi_interp = $interp->make_dbi_interp(@params); # OO
+  $keyobj = key_field($key_field);
 
-This is similar in make_sql_interp except that is generates a closure
-around the C<dbi_interp()> function or method rather than sql_interp.
+Creates and returns an DBIx::Interpolate::Key macro object, which if
+processed by C<dbi_interp()> will cause C<dbi_interp()> to return an
+extra $key_field value in the result so that the result is suitable
+for passing into $dbh->fetchrow_hashref and related methods.
 
-=head2 Database object (DBX) methods
+  my ($sql, $key, $attr, @bind) =
+  my @params = dbi_interp "SELECT * FROM mytable", key_field('itemid');
+  $dbh->selectall_hashref(@params);
+
+=head1 Database object (DBX) methods
 
 An object of type DBIx::Interpolate represents (and wraps) a database
 handle.  Most of its methods are wrappers around corresponding DBI
@@ -589,9 +574,9 @@ methods.
 
  my $dbx = DBX::Interpolate->new($db, %params);
 
-Creates a new object and optionally creates or attached a DBI handle.
+Creates a new object, creating or attaching a DBI handle.
 
-$db [optional] is either a DBI database handle or an ARRAYREF
+$db is either a DBI database handle or an ARRAYREF
 containing parameters that will be passed to DBI::connect, e.g.
 [$data_source, $username, $auth, \%attr].  This parameter may be
 omitted.
@@ -630,25 +615,22 @@ methods).
 
  $dbx->stx()->max_sths(10);
 
-=item do
+=item do_i
 
-=item selectall_arrayref
+=item selectall_arrayref_i
 
-=item selectall_hashref
+=item selectall_hashref_i
 
-=item selectcol_arrayref
+=item selectcol_arrayref_i
 
-=item selectrow_array
+=item selectrow_array_i
 
-=item selectrow_arrayref
+=item selectrow_arrayref_i
 
-=item selectrow_hashref
+=item selectrow_hashref_i
 
-These methods are identical to those in DBI except that it takes a
-parameter list identical to C<dbi_interp()>.
-
- my $res = $dbx->selectall_hashref(
-               "SELECT * FROM mytable WHERE x=", \$x);
+These methods are identical to those in DBI except interpolation is performed 
+via SQL::Interpolate
 
 =item prepare
 
@@ -727,6 +709,62 @@ available.  The fetch will be performed against the active statement
 handle in the set.
 
 =back
+
+=head1 Internal functions
+
+You normally don't need to care about this functions.
+
+=head2 C<dbi_interp>
+
+  ($sql, $attr, @bind) = dbi_interp(@interp_list);
+  ($sql, $key_field, $attr, @bind) = dbi_interp(@interp_list);
+
+C<dbi_interp()> is a thin wrapper around C<sql_interp()>.  It
+serves as an adapter that returns the exact parameter list
+expected by the DBI functions (including the \%attr value and sometimes
+the $key_field value).
+
+In addition to the parameters accepted by
+SQL::Interpolate::sql_interp, @interp_list may contain the macros
+constructed by the C<attr()> and C<key_field()> functions discussed
+later.  C<dbi_interp()> will convert these DBI-specific macros as
+needed into additional return values expected by certain DBI methods.
+For example, DBI's C<selectall_hashref()> requires an additional
+$key_field parameter:
+
+  $dbh->selectall_hashref($statement, $key_field, \%attr, @bind_values);
+
+This is parameter is generated by adding the C<key_field()> macro onto
+the interpolation list:
+
+  my ($sql, $key_field, $attr, @bind) = dbi_interp
+      "SELECT * FROM mytable WHERE x=", \$x,
+      key_field("y"), attr(myatt => 1)
+  # RESULT:
+  #   ($sql, $key_field, $attr, @bind) =
+  #       ("SELECT * FROM mytable WHERE x=?", 'y', {myatt=>1}, $x)
+
+Typically, you need not call C<dbi_interp()> directly since it is
+called internally by the DBI wrapper methods:
+
+  $dbx->selectall_hashref(
+      "SELECT * FROM mytable WHERE x=", \$x,
+      key_field("y"), attr(myatt => 1));
+  # largely equivalent to
+  #   $dbh->selectall_hashref(dbi_interp
+  #       "SELECT * FROM mytable WHERE x=", \$x,
+  #       key_field("y"), attr(myatt => 1));
+
+=head2 C<make_dbi_interp>
+
+  $dbi_interp = make_dbi_interp(@params);          # functional
+  $dbi_interp = $interp->make_dbi_interp(@params); # OO
+
+This is similar to C<make_sql_interp()> from SQL::Interpolate except
+that is generates a closure around the C<dbi_interp()> function
+rather than C<sql_interp()>.
+
+
 
 =head1 DEPENDENCIES
 

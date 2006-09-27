@@ -1,57 +1,62 @@
----
+--- #YAML:1.0
 name: SQL-Interpolate
-version: 0.33
-author:
-  - David Manura (http://math2.org/david/contact)
-abstract: Interpolate Perl variables into SQL statements
+version: 0.40_03
 license: perl
+distribution_type: module
+requires: {}
 recommends:
   Filter::Simple: 0
+  Scalar::Util: 0
   Text::Balanced: 1.87
+build_requires: {}
+conflicts: {}
 provides:
   DBIx::Interpolate:
     file: lib/DBIx/Interpolate.pm
-    version: 0.33
+    version: 0.40_03
   DBIx::Interpolate::STX:
     file: lib/DBIx/Interpolate.pm
-    version: 0.33
+    version: 0.40_03
+  DBIx::Interpolate::db:
+    file: lib/DBIx/Interpolate.pm
+    version: 0.40_03
   SQL::Interpolate:
     file: lib/SQL/Interpolate.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::And:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Filter:
     file: lib/SQL/Interpolate/Filter.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::If:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Link:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Macro:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Or:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Paren:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Rel:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::RelProcessor:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::SQL:
     file: lib/SQL/Interpolate.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::SQLFilter:
     file: lib/SQL/Interpolate/Macro.pm
-    version: 0.33
+    version: 0.40_03
   SQL::Interpolate::Variable:
     file: lib/SQL/Interpolate.pm
-    version: 0.33
-generated_by: Module::Build version 0.2611
+    version: 0.40_03
+generated_by: Module::Build version 0.21

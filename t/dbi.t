@@ -27,7 +27,7 @@ BEGIN {
 # selectall_arrayref
 $dbh->{mock_add_resultset} = \@result1;
 is_deeply(
-    $dbx->selectall_arrayref("SELECT * FROM mytable WHERE x IN", [1,2]),
+    $dbx->selectall_arrayref_i("SELECT * FROM mytable WHERE x IN", [1,2]),
     \@data1,
     'selectall_arrayref'
 );
@@ -36,7 +36,7 @@ is($dbh->{mock_all_history}->[0]{statement},
 is_deeply($dbh->{mock_all_history}->[0]{bound_params}, [1, 2]);
 
 # prepare
-my $stx = $dbx->prepare();
+my $stx = $dbx->prepare_i();
 is(ref($stx), 'DBIx::Interpolate::STX');
 
 # max_sths
@@ -46,7 +46,7 @@ is($stx->max_sths(), 2);
 # execute
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
-$stx->execute('SELECT * FROM mytable WHERE y IN', [2,3]);
+$stx->execute_i('SELECT * FROM mytable WHERE y IN', [2,3]);
 is_deeply(
     $stx->fetchall_arrayref(),
     \@data1,
@@ -59,7 +59,7 @@ is_deeply($dbh->{mock_all_history}->[0]{bound_params}, [2, 3]);
 # execute (same SQL)
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
-$stx->execute('SELECT * FROM mytable WHERE y IN', [4,5]);
+$stx->execute_i('SELECT * FROM mytable WHERE y IN', [4,5]);
 is_deeply(
     $stx->fetchall_arrayref(),
     \@data1,
@@ -72,7 +72,7 @@ is_deeply($stx->sth()->{mock_params}, [4, 5]);
 # execute (new SQL)
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
-$stx->execute('SELECT * FROM mytable WHERE y IN', [4,5,6]);
+$stx->execute_i('SELECT * FROM mytable WHERE y IN', [4,5,6]);
 is_deeply(
     $stx->fetchall_arrayref(),
     \@data1,
@@ -87,7 +87,7 @@ is(scalar(keys %{$stx->sths()}), 2, 'two sths in stx');
 # execute (new SQL)
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
-$stx->execute('SELECT * FROM mytable WHERE y IN', [4,5,6,7]);
+$stx->execute_i('SELECT * FROM mytable WHERE y IN', [4,5,6,7]);
 is_deeply(
     $stx->fetchall_arrayref(),
     \@data1,
@@ -106,7 +106,7 @@ my $h2_values = [values %$h2];
 # bind_param
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
-$dbx->selectall_arrayref("SELECT * FROM mytable WHERE x=", \$x,
+$dbx->selectall_arrayref_i("SELECT * FROM mytable WHERE x=", \$x,
     "AND y=", sql_var(\$y, type => SQL_INTEGER),
     "AND", sql_var($h2, type => SQL_DATETIME),
     "AND x IN", sql_var([4, 5], type => SQL_VARCHAR)
