@@ -1,3 +1,7 @@
+0.40 2007-05-08
+    - No code changes. Declaring stable.
+    - List DBI as a dependency to squelch a test failure.
+
 0.40_03 2006-09-27
 
     - Further documentation refinements. No code changes.

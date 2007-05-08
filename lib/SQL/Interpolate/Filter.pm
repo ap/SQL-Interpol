@@ -9,7 +9,7 @@ use Text::Balanced qw/extract_quotelike
                       extract_variable
                       extract_codeblock/;
 
-our $VERSION = '0.40_03';
+our $VERSION = '0.40';
 
 # Source filter.
 # Note: this could be improved as done in the POD of the development 2.0 version of

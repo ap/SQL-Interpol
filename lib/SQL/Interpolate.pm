@@ -1,6 +1,6 @@
 package SQL::Interpolate;
 
-our $VERSION = '0.40_03';
+our $VERSION = '0.40';
 
 use strict;
 use warnings;

@@ -8,7 +8,7 @@ BEGIN {
     SQL::Interpolate::_enable_macros();
 }
 
-our $VERSION = '0.40_03';
+our $VERSION = '0.40';
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
     sql_and

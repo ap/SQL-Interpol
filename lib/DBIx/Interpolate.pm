@@ -7,7 +7,7 @@ use DBI;
 use SQL::Interpolate qw(:all);
 use base qw(Exporter DBI);
 
-our $VERSION = '0.40_03';
+our $VERSION = '0.40';
 
 our @EXPORT;
 our %EXPORT_TAGS = (all => [qw(
