@@ -1,7 +1,7 @@
 use Module::Build;
 
 Module::Build->new(
-    module_name => 'SQL::Interpolate',
+    module_name => 'SQL::Interp',
     license => 'perl',
     requires => {
         DBI   => 1.00,

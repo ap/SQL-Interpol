@@ -1,13 +1,13 @@
 # dbi.pl
-# simple tests of DBIx::Interpolate.
+# simple tests of DBIx::Interp.
 
 use strict;
 use Data::Dumper;
-use DBIx::Interpolate qw(:all);
+use DBIx::Interp qw(:all);
 use DBI;
 
 unlink('test.sqlt');
-my $dbx = DBIx::Interpolate->connect(
+my $dbx = DBIx::Interp->connect(
     "dbi:SQLite:dbname=test.sqlt", "", "",
     {RaiseError => 1, AutoCommit => 1}
 );

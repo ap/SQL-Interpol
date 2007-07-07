@@ -1,6 +1,6 @@
---- #YAML:1.0
-name: SQL-Interpolate
-version: 0.40
+---
+name: SQL-Interp
+version: 1.00
 author:
   - David Manura (http://math2.org/david/contact)
   - Mark Stosberg <mark@summersault.com>
@@ -15,44 +15,21 @@ recommends:
   Scalar::Util: 0
   Text::Balanced: 1.87
 provides:
-  DBIx::Interpolate:
-    file: lib/DBIx/Interpolate.pm
-    version: 0.40
-  DBIx::Interpolate::STX:
-    file: lib/DBIx/Interpolate.pm
-  DBIx::Interpolate::db:
-    file: lib/DBIx/Interpolate.pm
-  SQL::Interpolate:
-    file: lib/SQL/Interpolate.pm
-    version: 0.40
-  SQL::Interpolate::And:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Filter:
-    file: lib/SQL/Interpolate/Filter.pm
-    version: 0.40
-  SQL::Interpolate::If:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Link:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Macro:
-    file: lib/SQL/Interpolate/Macro.pm
-    version: 0.40
-  SQL::Interpolate::Or:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Paren:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Rel:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::RelProcessor:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::SQL:
-    file: lib/SQL/Interpolate.pm
-  SQL::Interpolate::SQLFilter:
-    file: lib/SQL/Interpolate/Macro.pm
-  SQL::Interpolate::Variable:
-    file: lib/SQL/Interpolate.pm
-generated_by: Module::Build version 0.2807
+  DBIx::Interp:
+    file: lib/DBIx/Interp.pm
+    version: 1.00
+  DBIx::Interp::STX:
+    file: lib/DBIx/Interp.pm
+  DBIx::Interp::db:
+    file: lib/DBIx/Interp.pm
+  SQL::Interp:
+    file: lib/SQL/Interp.pm
+    version: 1.00
+  SQL::Interp::SQL:
+    file: lib/SQL/Interp.pm
+  SQL::Interp::Variable:
+    file: lib/SQL/Interp.pm
+generated_by: Module::Build version 0.2806
 meta-spec:
-  url: |-
-    http://module-build.sourceforge.net/META-spec-v1.2.html
+  url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2

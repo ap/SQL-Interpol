@@ -1,3 +1,17 @@
+1.00 2007-07-06
+
+    - forked as SQL::Interp / DBIx::Interp from SQL::Interpolate
+    - TRACE_SQL can now be set through an environment variable
+    - sql_var() renamed to sql_type()
+    - removed sql_literal(). It had been previously superceded by sql(). 
+    - removed make_sql_interp and make_dbi_interp.
+        These are just basic curry patterns that you probably won't need,
+        and can be easily created as-needed.
+
+    - significant doc update, mostly to simplify it
+    - removed Macro support
+    - removed filter support
+
 0.40 2007-05-08
     - No code changes. Declaring stable.
     - List DBI as a dependency to squelch a test failure.
@@ -8,7 +22,7 @@
 
 0.40_02 ??
 
-	## SQL::Interpolate
+	## SQL::Interp
 
 	- POD improvements.
 
@@ -16,14 +30,14 @@
 	  /[a-zA-Z_.]+/ --> /[a-zA-Z_][a-zA-Z0-9_\$\.]*/
 	  (reported by mark tiefenbruck)
 
-	## DBIx::Interpolate
+	## DBIx::Interp
 
 	- WARNING: BREAKS compatibility with 0.33.
 
-	- DBIx::Interpolate now inherits from DBI.
+	- DBIx::Interp now inherits from DBI.
 
-	- Changed SQL::Interpolate::Key and SQL::Interpolate::Attr
-	  to DBIx::Interpolate::Key and DBIx::Interpolate::Attr
+	- Changed SQL::Interp::Key and SQL::Interp::Attr
+	  to DBIx::Interp::Key and DBIx::Interp::Attr
 	  respectively to reduce chance of name conflict.
 
 	- Fixed circular references to allow garbage collection.
@@ -32,7 +46,7 @@
 
 0.33	2005-11-10
 
-	## SQL::Interpolate
+	## SQL::Interp
 
 	- Build.PL - fixed version syntax so that META.yml is valid.
 
@@ -53,7 +67,7 @@
 
 0.32	2005-11-05
 
-	## SQL::Interpolate
+	## SQL::Interp
 
 	This module has been simplified, and it incorporates
 	defect corrections and style improvements.
@@ -67,13 +81,13 @@
 
 	- Fixed sub-module version numbers for CPAN.
 
-	- New sql() function (based on SQL::Interpolate::SQL
+	- New sql() function (based on SQL::Interp::SQL
 	  from Macro.pm).  sql_literal() is now depreciated
 	  in favor of sql().
 
 	- sql_interp() now handles recursion correctly.
 
-	- sql_flatten() moved into SQL::Interpolate::Macro.
+	- sql_flatten() moved into SQL::Interp::Macro.
 
 	- Added pod.t - Test::Pod checks
 
@@ -83,7 +97,7 @@
 
 	- POD and code style improvements.
 
-	## DBIx::Interpolate
+	## DBIx::Interp
 
 	- Removed AUTOLOAD usage.
 
@@ -110,13 +124,13 @@
 	- SQLFilter::filter_text_fragment() no longer has $changing_ref
 	  in parameter list.
 
-	## SQL::Interpolate::Filter
+	## SQL::Interp::Filter
 
 	- sql// objects now transform into calls to make_sql().
 
 0.31	2005-09-27
 
-	## SQL::Interpolate
+	## SQL::Interp
 
 	- Improved error reporting by sql_interp
 	  (recommended by mark stosberg)
@@ -131,7 +145,7 @@
 	  (reported by wojciech pietron)
 
 	- Fixed some improper handling of "use"
-	  parameters, e.g. $x in "use SQL::Interpolate FILTER=>$x"
+	  parameters, e.g. $x in "use SQL::Interp FILTER=>$x"
 
 	- Fixed various Exporter problems from custom import
 	  (reported by mark stosberg)
@@ -142,13 +156,13 @@
 
 	- Documentation improvements.
 
-	## SQL::Interpolate::Macro
+	## SQL::Interp::Macro
 
 	- Fixed: '^' and '$' are no longer
 	  automatically placed around regexes in 'relations' parameter.
 	  (reported by wojciech pietron)
 
-	## DBIx::Interpolate
+	## DBIx::Interp
 
 	- Added support for transparent
 	  caching of statement handles (no need to prepare()).
@@ -163,17 +177,17 @@
 
 	## General
 
-	- Refactored SQL::Interpolate module into multiple modules.
+	- Refactored SQL::Interp module into multiple modules.
 	  Everything except sql_interp-related functionality
-	  moved out of SQL::Interpolate and into DBIx::Interpolate,
-	  SQL::Interpolate::Filter, and SQL::Interpolate::Macro (new module).
+	  moved out of SQL::Interp and into DBIx::Interp,
+	  SQL::Interp::Filter, and SQL::Interp::Macro (new module).
 	  (recommended by mark s)
 
-	- Reorganized macro processing.  SQL::Interpolate contains
-	  only hooks for macro processing, and SQL::Interpolate::Macro
+	- Reorganized macro processing.  SQL::Interp contains
+	  only hooks for macro processing, and SQL::Interp::Macro
 	  implements various macros.
 
-	## SQL::Interpolate
+	## SQL::Interp
 
 	- added sql_var type
 
@@ -186,17 +200,17 @@
 	- macros, sql_var, and sql_literal can now exist in
 	  elements of aggregates (hashref and arrayref)
 
-	## DBIx::Interpolate
+	## DBIx::Interp
 
-	- DBIx::Interpolate is now derived from SQL::Interpolate.
+	- DBIx::Interp is now derived from SQL::Interp.
 
 	- Support for statement handle sets (stx/prepare).
 
 	- Renamed select_key() to key_field().
 
-	## SQL::Interpolate::Macro
+	## SQL::Interp::Macro
 
-	- SQL::Interpolate::SQL is now a macro for uniformity.
+	- SQL::Interp::SQL is now a macro for uniformity.
 
 	- new macros: relations, sql_and, sql_fragment, sql_if,
 	  sql_link, sql_or, sql_paren, sql_rel
@@ -212,7 +226,7 @@
 
 0.29	2004-12-25
 
-	### SQL::Interpolate features
+	### SQL::Interp features
 
 	- Added support for ("IN", $scalarref) (thanks mark s)
 
@@ -235,7 +249,7 @@
 	  This object may be created by new attr() function.
 
 	- Added support for extra $key_field to be returned by
-	  dbi_interp() when instance of new SQL::Interpolate::Key object
+	  dbi_interp() when instance of new SQL::Interp::Key object
 	  is given.  This object may be created by new attr() function.
 	  This is for using in DBI::selectall_hashref and similar methods.
 
@@ -252,42 +266,42 @@
 
 	- Changed: In limit(), for mysql, $start and/or $count may be undef.
 
-	### SQL::Interpolate internal changes
+	### SQL::Interp internal changes
 
 	- Dereferencing extra reference that source filtering produces from
 	  sql[$x] when $x is an arrayref or hashref is now performed more
-	  immediately in SQL::Interpolate::SQL::new() rather than sql_interp().
+	  immediately in SQL::Interp::SQL::new() rather than sql_interp().
 
-	- new SQL::Interpolate::Limit extends SQL::Interpolate::Macro.
+	- new SQL::Interp::Limit extends SQL::Interp::Macro.
 
-	- Moved SQL::Interpolate::SQL into SQL::Interpolate
+	- Moved SQL::Interp::SQL into SQL::Interp
 
 	- Fixed some documentation (thanks mark s)
 
 	- Added more tests, more complete docs
 
-	### DBIx::Interpolate features
+	### DBIx::Interp features
 
 	- Added new() method in addition to connect() to attach existing
 	  database handle (thanks mark s)
 
 	- Added dbh() and interp() methods to expose underlying DBI and
-	  SQL::Interpolate objects.
+	  SQL::Interp objects.
 
 0.20	2004-01-03
-	- Added SQL::Interpolate::Filter module for source filtering
+	- Added SQL::Interp::Filter module for source filtering
 	  with string-like sql// operator.
 
-	- Added DBIx::Interpolate module. (thanks jim c)
+	- Added DBIx::Interp module. (thanks jim c)
 
-	- Added SQL::Interpolate::SQL module.
+	- Added SQL::Interp::SQL module.
 
 	- Support macro calls inside SQL (e.g. LIMIT macro).
 
 	- Renamed sql_interpolate and dbi_interpolate to sql_interp
 	  and dbi_interp respectively (thanks terrence).
 
-	- Changed SQL::Interpolate to not export symbols by default.
+	- Changed SQL::Interp to not export symbols by default.
 
 	- Limited cross-database support for LIMIT clauses.
 

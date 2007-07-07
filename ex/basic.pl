@@ -1,9 +1,9 @@
 # one.pl
-# simple tests of SQL::Interpolate.
+# simple tests of SQL::Interp.
 
 use strict;
 use Data::Dumper;
-use SQL::Interpolate qw(:all);
+use SQL::Interp qw(:all);
 
 my @colors = ('blue', 'green');
 my $x = 5;

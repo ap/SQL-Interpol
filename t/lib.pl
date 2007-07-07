@@ -2,8 +2,7 @@
 # Utility functions for the test suite.
 
 use strict;
-use SQL::Interpolate qw(:all);
-use SQL::Interpolate::Macro qw(sql_flatten);
+use SQL::Interp qw(:all);
 use Data::Dumper;
 
 #our $fake_mysql_dbh =
@@ -13,8 +12,6 @@ use Data::Dumper;
 sub sql_str
 {
     my(@parts) = @_;
-
-    @parts = sql_flatten @parts;
 
     my $out = Dumper(\@parts);
 

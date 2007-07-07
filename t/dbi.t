@@ -1,16 +1,16 @@
-# Tests of DBIx::Interpolate
+# Tests of DBIx::Interp
 
 use strict;
 use lib 't/lib';
 use DBD::Mock;
 use Test::More 'no_plan';
 use Data::Dumper;
-use DBIx::Interpolate qw(:all);
+use DBIx::Interp qw(:all);
 use DBI qw(:sql_types);
 
 my $dbh = DBI->connect('DBI:Mock:', '', '')
     or die "Cannot create handle: $DBI::errstr\n";
-my $dbx = new DBIx::Interpolate($dbh);
+my $dbx = new DBIx::Interp($dbh);
 
 my @data1   = (['a', 'b'], ['c', 'd']);
 my @result1 = (['color', 'size'], @data1);
@@ -20,7 +20,7 @@ my $y = 6;
 
 # test of use parameter inheritance
 BEGIN {
-    use_ok('DBIx::Interpolate',
+    use_ok('DBIx::Interp',
         'dbi_interp', 'sql_interp', TRACE_SQL => 0); # 0.3
 }
 
@@ -37,7 +37,7 @@ is_deeply($dbh->{mock_all_history}->[0]{bound_params}, [1, 2]);
 
 # prepare
 my $stx = $dbx->prepare_i();
-is(ref($stx), 'DBIx::Interpolate::STX');
+is(ref($stx), 'DBIx::Interp::STX');
 
 # max_sths
 $stx->max_sths(2);
@@ -107,9 +107,9 @@ my $h2_values = [values %$h2];
 $dbh->{mock_clear_history} = 1;
 $dbh->{mock_add_resultset} = \@result1;
 $dbx->selectall_arrayref_i("SELECT * FROM mytable WHERE x=", \$x,
-    "AND y=", sql_var(\$y, type => SQL_INTEGER),
-    "AND", sql_var($h2, type => SQL_DATETIME),
-    "AND x IN", sql_var([4, 5], type => SQL_VARCHAR)
+    "AND y=", sql_type(\$y, type => SQL_INTEGER),
+    "AND", sql_type($h2, type => SQL_DATETIME),
+    "AND x IN", sql_type([4, 5], type => SQL_VARCHAR)
 );
 is_deeply(
     $dbh->{mock_all_history}->[0]{statement},

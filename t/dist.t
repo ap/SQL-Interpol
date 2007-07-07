@@ -5,10 +5,8 @@ use Test::More 'no_plan';
 
 # list of all modules
 my @modules = (
-    'SQL::Interpolate',
-    'SQL::Interpolate::Macro',
-    'SQL::Interpolate::Filter',
-    'DBIx::Interpolate'
+    'SQL::Interp',
+    'DBIx::Interp'
 );
 
 my %version_exist;

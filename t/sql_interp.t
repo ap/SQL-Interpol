@@ -1,22 +1,19 @@
-# Tests of SQL::Interpolate
+# Tests of SQL::Interp
 
 use strict;
 use warnings;
 use Test::More 'no_plan';
-use SQL::Interpolate qw(:all);
-use SQL::Interpolate::Macro qw(:all);
+use SQL::Interp ':all';
 use Data::Dumper;
 BEGIN {require 't/lib.pl';}
 
 # test of use parameters
 BEGIN {
-    use_ok('SQL::Interpolate',
-        ':all', TRACE_SQL => 0, TRACE_FILTER => 0, FILTER => 0); # 0.3
+    use_ok('SQL::Interp',
+        ':all', TRACE_SQL => 0 ); # 0.3
 }
 
-my $interp = new SQL::Interpolate;
-my $sql_interp = $interp->make_sql_interp();
-my $sql_interp2 = make_sql_interp();
+my $interp = new SQL::Interp;
 
 my $x = 5;
 my $y = 6;
@@ -28,13 +25,13 @@ my $h0 = {};
 my $h = {one => 1, two => 2};
 my $hi = make_hash_info($h);
 
-my $var1 = sql_var(\$x);
-my $var2 = sql_var(\$x, type => 1);
+my $var1 = sql_type(\$x);
+my $var2 = sql_type(\$x, type => 1);
 
 my $h2i = make_hash_info(
     { one => 1, two => $var2, three => sql('3') },
     { one => '?', two => '?', three => '3' },
-    { one => [[1, sql_var(\1)]], two => [[${$var2->{value}}, $var2]] }
+    { one => [[1, sql_type(\1)]], two => [[${$var2->{value}}, $var2]] }
 );
 
 # Returns structure containing info on the hash.
@@ -62,18 +59,6 @@ sub order_keyed_values {
     return @values;
 }
 
-# trivial macro that expands identically to its parameter list
-{
-    package IdentityMacro;
-    use base 'SQL::Interpolate::Macro';
-    sub new {
-        my($class, @list) = @_;
-        return bless \@list, $class;
-    }
-    sub expand { return @{ $_[0] }; }
-}
-sub identity_macro { return IdentityMacro->new(@_); }
-
 #== trivial cases
 interp_test([],
             [''],
@@ -87,9 +72,9 @@ interp_test([\$x],
 interp_test([sql()],
             [''],
             'sql()');
-interp_test([SQL::Interpolate::SQL->new(\$x)],
+interp_test([SQL::Interp::SQL->new(\$x)],
             [' ?', $x],
-            'SQL::Interpolate::SQL->new(scalarref)');
+            'SQL::Interp::SQL->new(scalarref)');
 
 # improve: call with with macros disabled
 
@@ -136,7 +121,7 @@ interp_test(['INSERT INTO mytable', $h2i->{hashref}],
             ["INSERT INTO mytable ($h2i->{keys}[0], $h2i->{keys}[1], $h2i->{keys}[2]) " .
              "VALUES($h2i->{places}->[0], $h2i->{places}->[1],  $h2i->{places}->[2])",
              @{$h2i->{binds}}],
-            'INSERT hashref of sql_var + sql()');
+            'INSERT hashref of sql_type + sql()');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
             'INSERT hashref with macro');
@@ -185,8 +170,8 @@ interp_test(['UPDATE mytable SET', $h],
 interp_test(['UPDATE mytable SET',
                 {one => 1, two => $var2, three => sql('3')}],
             ['UPDATE mytable SET three=3, one=?, two= ?',
-                [1, sql_var(\1)], [${$var2->{value}}, $var2]],
-            'SET hashref of sql_var types, sql()');
+                [1, sql_type(\1)], [${$var2->{value}}, $var2]],
+            'SET hashref of sql_type types, sql()');
 #FIX--what if size of hash is zero? error?
 
 # WHERE hashref
@@ -218,25 +203,25 @@ interp_test(['WHERE x=', \$x],
             ['WHERE x= ?', $x],
             'WHERE x=scalarref');
 
-# sql_var
-interp_test(['WHERE x=', \$x, 'AND', 'y=', sql_var(\$y)],
+# sql_type
+interp_test(['WHERE x=', \$x, 'AND', 'y=', sql_type(\$y)],
             ['WHERE x= ? AND y= ?', $x, $y],
-            'WHERE \$x, sql_var');
+            'WHERE \$x, sql_type');
 interp_test(['WHERE x=', \$x, 'AND', 'y=', $var2],
-            ['WHERE x= ? AND y= ?', [$x, sql_var(\$x)], [${$var2->{value}}, $var2]],
-            'WHERE \$x, sql_var typed');
+            ['WHERE x= ? AND y= ?', [$x, sql_type(\$x)], [${$var2->{value}}, $var2]],
+            'WHERE \$x, sql_type typed');
 interp_test(['WHERE', {x => $x, y => $var2}, 'AND z=', \$x],
             ['WHERE (y= ? AND x=?) AND z= ?',
-                [${$var2->{value}}, $var2], [$x, sql_var(\$x)], [$x, sql_var(\$x)]],
-            'WHERE hashref of \$x, sql_var typed');
+                [${$var2->{value}}, $var2], [$x, sql_type(\$x)], [$x, sql_type(\$x)]],
+            'WHERE hashref of \$x, sql_type typed');
 my $h5i = make_hash_info(
     {x => $x, y => [3, $var2]},
     {x => 'x=?', y => 'y IN (?,  ?)'},
-    {x => [[$x, sql_var(\$x)]], y => [[3, sql_var(\3)], [${$var2->{value}}, $var2]]}
+    {x => [[$x, sql_type(\$x)]], y => [[3, sql_type(\3)], [${$var2->{value}}, $var2]]}
 );
 interp_test(['WHERE', $h5i->{hashref}],
             ["WHERE ($h5i->{places}[0] AND $h5i->{places}[1])", @{$h5i->{binds}}],
-            'WHERE hashref of arrayref of sql_var typed');
+            'WHERE hashref of arrayref of sql_type typed');
 interp_test(['WHERE', {x => $x, y => sql('z')}],
             ['WHERE (y=z AND x=?)', $x],
             'WHERE hashref of \$x, sql()');
@@ -274,13 +259,6 @@ interp_test(['FROM', [{a => sql(1)}]], ['FROM (SELECT 1 AS a) AS tbl0'], 'vh 1 1
 interp_test(['FROM', [[sql(\1)]]], ['FROM (SELECT  ?) AS tbl0', 1], 'vv 1 1 of sql(\1)');
 interp_test(['FROM', [[sql('1=', \1)]]],
     ['FROM (SELECT 1= ?) AS tbl0', 1], 'vv 1 1 of sql(s,\1)');
-interp_test(['FROM', [ identity_macro([1,2]) ] ],
-    ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'v of identity_macro(v 2)');
-interp_test(['FROM', [ identity_macro($h) ] ],
-    ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1]) AS tbl0", @{$hi->{values}}],
-    'v of identity_macro(h 2)');
-interp_test(['FROM', [ [identity_macro(1),2] ] ],
-    ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'vv 1 2 of identity_macro');
 interp_test(['FROM', [[1]], ' AS mytable'],
     ['FROM (SELECT ?) AS mytable', 1], 'vv 1 1 with alias');
 interp_test(['FROM', [[undef]]],
@@ -308,8 +286,6 @@ sub interp_test
 
     $test->($func->(sql_interp @$snips), $expect, $name);
     $test->($func->($interp->sql_interp(@$snips)), $expect, "$name OO");
-    $test->($func->($sql_interp->(@$snips)), $expect, "$name closure");
-    $test->($func->($sql_interp2->(@$snips)), $expect, "$name closure2");
 }
 
 sub error_test
