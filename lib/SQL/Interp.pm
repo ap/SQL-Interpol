@@ -55,28 +55,16 @@ sub parse {
             next;
         }
 
-        if ($sql =~ /\b(NOT\s+)?IN\s*$/si) {
-            my $not = quotemeta($1 || '');
-
-            $item = [ $$item ] if ref $item eq 'SCALAR';
-
-            # allow double references
-            $item = $$item if ref $item eq 'REF' ;
-
-            if (ref $item eq 'ARRAY') {
-                if (@$item == 0) {
-                    my $dummy_expr = $not ? '1=1' : '1=0';
-                    $sql =~ s/$ident_rx\s+${not}IN\s*$/$dummy_expr/si or Carp::croak 'ASSERT';
-                }
-                else {
-                    $sql .= " (" . join(', ', map {
-                        $self->bind_or_parse_value($_);
-                    } @$item) . ")";
-                }
-            }
-            else {
-                $self->error;
-            }
+        if ( $sql =~ s/(\s*$ident_rx\s+(NOT\s+)?IN)\s*$//i ) {
+            my $type = ref $item;
+            my @value
+                = 'SCALAR' eq $type ? $$item
+                : 'ARRAY'  eq $type ? @$item
+                : 'REF'    eq $type && 'ARRAY' eq ref $$item ? @$$item
+                : $self->error;
+            $sql .= @value
+                ? $1 . ' (' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')'
+                : ( $2 ? ' 1=1' : ' 1=0' );
         }
         elsif ($sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/si && ref $item eq 'HASH') {
             _error 'Hash has zero elements.' if keys %$item == 0;
