@@ -54,10 +54,8 @@ sub _sql_interp {
 
     foreach my $item (@items) {
         if (ref $item eq 'SQL::Interp::SQL') {
-            my ($sql2, @bind2) = _sql_interp(@$item);
             $sql .= ' ' if $sql ne '';
-            $sql .= $sql2;
-            push @bind, @bind2;
+            $sql .= _sql_interp(@$item);
         }
         elsif (ref $item) {
             if ($sql =~ /\b(NOT\s+)?IN\s*$/si) {
@@ -179,15 +177,9 @@ sub _sql_interp {
 # returns $sql
 sub _sql_interp_data {
     my ($ele) = @_;
-    if (ref $ele) {  # e.g. sql()
-        my ($sql2, @bind2) = _sql_interp($ele);
-        push @bind, @bind2;
-        return $sql2;
-    }
-    else {
-        push @bind, $ele;
-        return '?';
-    }
+    return _sql_interp($ele) if ref $ele; # e.g. sql()
+    push @bind, $ele;
+    return '?';
 }
 
 # sql_interp helper function to interpolate "key IN list",
