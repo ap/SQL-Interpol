@@ -2,10 +2,9 @@
 
 use strict;
 use warnings;
-use Test::More 'no_plan';
+use Test::More 0.88; # for done_testing
+use Test::Differences;
 use SQL::Interp ':all';
-use Data::Dumper;
-BEGIN {require 't/lib.pl';}
 
 # test of use parameters
 BEGIN {
@@ -34,29 +33,21 @@ my $h2i = make_hash_info(
     { one => [[1, sql_type(\1)]], two => [[${$var2->{value}}, $var2]] }
 );
 
-# Returns structure containing info on the hash.
-# This info is useful in the sql_interp tests.
-# Note: Perl does not define an ordering on hash keys, so these tests
-# take care not to assume a particular order.
 sub make_hash_info {
-    my ($hashref, $place_of, $bind_of) = @_;
+    my ( $hash, $place_of, $bind_of ) = @_;
+    my @k = sort keys %$hash;
     my $info = {
-        hashref => $hashref,
-        keys    => [ sort keys %$hashref ],
-        values  => [ map { $hashref->{$_} } sort keys %$hashref ],
-        places  => [ @$place_of{sort keys %$hashref} ],
-        binds   => [ map {defined $_ ? @$_ : ()}
-                         @$bind_of{ grep { exists $bind_of->{$_} } sort keys %$hashref} ]
+        hashref => $hash,
+        keys    => \@k,
+        values  => [ @$hash{ @k } ],
+        places  => [ @$place_of{ @k } ],
+        binds   => [
+            map { defined $_ ? @$_ : () }
+            map { $bind_of->{ $_ } } # autovivifies
+            @k
+        ],
     };
     return $info;
-}
-
-# returns the values in the given hash ordered by the given keys.
-# Helper function for the sql_interp tests. 
-sub order_keyed_values {
-    my ($ordered_keys, %value_for) = @_;
-    my @values = @value_for{@$ordered_keys};
-    return @values;
 }
 
 #== trivial cases
@@ -75,8 +66,6 @@ interp_test([sql()],
 interp_test([SQL::Interp::SQL->new(\$x)],
             [' ?', $x],
             'SQL::Interp::SQL->new(scalarref)');
-
-# improve: call with with macros disabled
 
 # test with sql()
 interp_test([sql('test')],
@@ -111,7 +100,7 @@ interp_test(['INSERT INTO mytable', $v2],
             'INSERT arrayref of size > 0 with sql()');
 interp_test(['INSERT INTO mytable', [1, sql(\$x, '*', \$x)]],
             ['INSERT INTO mytable VALUES(?,  ? * ?)', 1, $x, $x],
-            'INSERT arrayref of size > 0 with macro');
+            'INSERT arrayref of size > 0 with sql()');
 # OK in mysql
 interp_test(['INSERT INTO mytable', $h0],
             ['INSERT INTO mytable () VALUES()'],
@@ -127,7 +116,7 @@ interp_test(['INSERT INTO mytable', $h2i->{hashref}],
             'INSERT hashref of sql_type + sql()');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
-            'INSERT hashref with macro');
+            'INSERT hashref with sql()');
 # mysql
 interp_test(['INSERT HIGH_PRIORITY IGNORE INTO mytable', $v],
             ['INSERT HIGH_PRIORITY IGNORE INTO mytable VALUES(?, ?)', @$v],
@@ -164,7 +153,7 @@ interp_test(['WHERE field IN', $v2],
             'IN arrayref with sql()');
 interp_test(['WHERE field IN', [1, sql(\$x, '*', \$x)]],
             ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
-            'IN arrayref with macro');
+            'IN arrayref with sql()');
 interp_test(['WHERE', {field => $v}],
             ['WHERE field IN (?, ?)', 'one', 'two'],
             'hashref with arrayref');
@@ -173,7 +162,7 @@ interp_test(['WHERE', {field => $v0}],
             'hashref with arrayref of size = 0');
 interp_test(['WHERE', {field => [1, sql(\$x, '*', \$x)]}],
             ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
-            'hashref with arrayref with macro');
+            'hashref with arrayref with sql()');
 interp_test(['WHERE field in', $v0],
             ['WHERE 1=0'],
             'IN lowercase');  # fails in 0.31
@@ -281,33 +270,19 @@ interp_test(['FROM', [[undef]]],
 interp_test(['FROM', [{a => undef}]],
     ['FROM (SELECT ? AS a) AS tbl0', undef], 'vh 1 1 of undef');
 
-# error handling
-#OLD: error_test(['SELECT', []], qr/unrecognized.*array.*select/i, 'err1');
-#OLD: error_test(['IN', {}], qr/unrecognized.*hash.*in/i, 'err2');
+done_testing;
 
-sub interp_test
-{
-    my($snips, $expect, $name) = @_;
-#    print Dumper([sql_interp @$snips], $expect);
-
-    # custom filter
-    my $func = sub { return [@_]; };
-    my $test = \&my_deeply;
-    if(ref($expect) eq 'ARRAY' && @$expect > 0 && ref($expect->[0]) eq 'CODE') {
-        $func = shift @$expect;
-        $expect = $expect->[0];
-        $test = \&like;
-    }
-
-    $test->($func->(sql_interp @$snips), $expect, $name);
-    $test->($func->($interp->sql_interp(@$snips)), $expect, "$name OO");
+sub interp_test {
+    my ( $snips, $expect, $name ) = @_;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    eq_or_diff [ sql_interp @$snips ], $expect, $name;
+    eq_or_diff [ $interp->sql_interp( @$snips ) ], $expect, "$name OO";
 }
 
-sub error_test
-{
-    my($list, $re, $name) = @_;
-    eval {
-        sql_interp @$list;
-    };
-    like($@, $re, $name);
+sub error_test {
+    my ( $list, $re, $name ) = @_;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    local $@;
+    eval { sql_interp @$list };
+    like $@, $re, $name;
 }
