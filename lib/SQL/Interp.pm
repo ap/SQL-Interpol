@@ -88,12 +88,6 @@ sub parse {
                 : $error->();
             $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
-        elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
-            my $do_alias = ( $_[0] // '' ) !~ /\s*AS\b/i;
-            $sql .= ' ' unless $sql eq '';
-            $sql .= $self->parse_resultset( $item ) // $error->();
-            $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
-        }
         elsif (ref $item eq 'SCALAR') {
             push @$bind, $$item;
             $sql .= ' ?';
@@ -125,8 +119,10 @@ sub parse {
             }
         }
         elsif (ref $item eq 'ARRAY') {  # result set
+            my $do_alias = $sql =~ /(?:\bFROM|JOIN)\s*$/i && ( $_[0] // '' ) !~ /\s*AS\b/i;
             $sql .= ' ' unless $sql eq '';
             $sql .= $self->parse_resultset( $item ) // $error->();
+            $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
         }
         else { $error->() }
     }
