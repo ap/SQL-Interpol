@@ -23,10 +23,6 @@ my $idx = 0;
 # [local to sql_interp functions]
 my $items_ref = undef;
 
-# state item (SQL::Iterpolate or DBI handle) used in interpolation.
-# [local to sql_interp functions]
-my $state = undef;
-
 # bind elements in interpolation
 # [local to sql_interp functions]
 my @bind;
@@ -39,19 +35,7 @@ sub sql_interp {
     $alias_id = 0;
     $idx = 0;
     $items_ref = undef;
-    $state = undef;
     @bind = ();
-
-    # extract state item (if any)
-    my $interp;
-    if (UNIVERSAL::isa($items[0], 'SQL::Interp')) {
-        $state = $interp = $items[0];
-    }
-    elsif (UNIVERSAL::isa($items[0], 'DBI::db')) {
-        $state = $items[0];
-    }
-
-    shift @items if $state;
 
     $items_ref = \@items;
 
