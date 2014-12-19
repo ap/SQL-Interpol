@@ -87,22 +87,18 @@ sub parse {
                     $self->bind_or_parse_value($val);
             } (sort keys %$item));
         }
-        elsif ($sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/si) {
-            $item = [ $$item ] if ref $item eq 'SCALAR';
-            if (ref $item eq 'ARRAY') {
-                $sql .= " VALUES(" . join(', ', map {
-                    $self->bind_or_parse_value($_);
-                } @$item) . ")";
-            }
-            elsif (ref $item eq 'HASH') {
-                my @keyseq = sort keys %$item;
-                $sql .=
-                    " (" . join(', ', @keyseq) . ")" .
-                    " VALUES(" . join(', ', map {
-                        $self->bind_or_parse_value($item->{$_});
-                    } @keyseq) . ")";
-            }
-            else { $self->error }
+        elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
+            my $type = ref $item;
+            my @value
+                = 'SCALAR' eq $type ? $$item
+                : 'ARRAY'  eq $type ? @$item
+                : 'HASH'   eq $type ? do {
+                    my @key = sort keys %$item;
+                    $sql .= ' (' . join( ', ', @key ) . ')';
+                    @$item{ @key };
+                }
+                : $self->error;
+            $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
         elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
             # table reference
