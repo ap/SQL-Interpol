@@ -86,23 +86,10 @@ sub parse {
             $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
         elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
-            # table reference
-
-            # get alias for table
-            my $table_alias = undef; # alias given to table
-            my $next_item = $_[$self->idx + 1];
-            if(defined $next_item && ref $next_item eq '' &&
-               $next_item =~ /\s*AS\b/is)
-            {
-                $table_alias = undef;  # provided by client
-            }
-            else {
-                $table_alias = 'tbl' . $self->alias_id++;
-            }
-
+            my $do_alias = ( $_[$self->idx + 1] // '' ) !~ /\s*AS\b/i;
             $sql .= ' ' unless $sql eq '';
-            $sql .= $self->parse_resultset($item);
-            $sql .= " AS $table_alias" if defined $table_alias;
+            $sql .= $self->parse_resultset( $item );
+            $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
         }
         elsif (ref $item eq 'SCALAR') {
             push @$bind, $$item;
