@@ -88,7 +88,7 @@ sub parse {
             $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
         elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
-            my $do_alias = ( $_[$self->idx + 1] // '' ) !~ /\s*AS\b/i;
+            my $do_alias = ( $_[0] // '' ) !~ /\s*AS\b/i;
             $sql .= ' ' unless $sql eq '';
             $sql .= $self->parse_resultset( $item );
             $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
