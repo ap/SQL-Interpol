@@ -149,7 +149,10 @@ sub _sql_interp {
                         "$key IS NULL";
                     }
                     elsif (ref $val eq 'ARRAY') {
-                        _sql_interp_list($key, $val);
+                        @$val ? do {
+                            my @v = map { _sql_interp_data($_) } @$val;
+                            $key . ' IN (' . join( ', ', @v ) . ')';
+                        } : '1=0';
                     }
                     else {
                         "$key=" .
@@ -183,24 +186,6 @@ sub _sql_interp_data {
     return '?';
 }
 
-# sql_interp helper function to interpolate "key IN list",
-# assuming context ("WHERE", {key => $list, ...}).
-sub _sql_interp_list {
-    my ($key, $list) = @_;
-    if (@$list == 0) {
-        return "1=0";
-    }
-    else {
-        my @sqle;
-        for my $ele (@$list) {
-            my $sqle
-                = _sql_interp_data($ele);
-            push @sqle, $sqle;
-        }
-        my $sql2 = $key . " IN (" . join(', ', @sqle) . ")";
-        return $sql2;
-    }
-}
 # sql_interp helper function to interpolate result set,
 #   e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
 sub _sql_interp_resultset {
