@@ -66,14 +66,11 @@ sub parse {
                 ? $1 . ' (' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')'
                 : ( $2 ? ' 1=1' : ' 1=0' );
         }
-        elsif ($sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/si && ref $item eq 'HASH') {
-            _error 'Hash has zero elements.' if keys %$item == 0;
-            $sql .= " " . join(', ', map {
-                my $key = $_;
-                my $val = $item->{$key};
-                "$key=" .
-                    $self->bind_or_parse_value($val);
-            } (sort keys %$item));
+        elsif ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i && ref $item eq 'HASH' ) {
+            _error 'Hash has zero elements.' if not keys %$item;
+            my @k = sort keys %$item;
+            my @v = map { $self->bind_or_parse_value( $_ ) } @$item{ @k };
+            $sql .= ' ' . join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
         }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
             my $type = ref $item;
