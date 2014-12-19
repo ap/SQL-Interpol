@@ -24,17 +24,17 @@ interp_test(['SELECT * FROM mytable'],
 interp_test([\$x],
             [' ?', $x],
             'scalarref');
+
+# test with sql()
 interp_test([sql()],
             [''],
             'sql()');
-interp_test([SQL::Interp::SQL->new(\$x)],
-            [' ?', $x],
-            'SQL::Interp::SQL->new(scalarref)');
-
-# test with sql()
 interp_test([sql('test')],
             ['test'],
-            'sql(string))');
+            'sql(string)');
+interp_test([sql(\$x)],
+            [' ?', $x],
+            'sql(scalarref)');
 interp_test([sql(sql(\$x))],
             [' ?', $x],
             'sql(sql(scalarref))');

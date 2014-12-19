@@ -1,67 +1,57 @@
+use 5.012;
+use warnings;
+
 package SQL::Interp;
 
-use strict;
-use warnings;
-use Carp;
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
+sub sql { bless [ @_ ], __PACKAGE__ }
 
-# regexes
-my $id_match = qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
-my $table_name_match = $id_match;
-
-
-# next ID to use for table alias
-# [local to sql_interp functions]
-my $alias_id = 0;
-
-# current index in interpolation list
-# [local to sql_interp functions]
-my $idx = 0;
-
-# current interpolation list
-# [local to sql_interp functions]
-my $items_ref = undef;
-
-# bind elements in interpolation
-# [local to sql_interp functions]
-my @bind;
-
-# note: sql_interp is not reentrant.
 sub sql_interp {
-    my @items = @_;
-
-    # clear call state
-    $alias_id = 0;
-    $idx = 0;
-    $items_ref = undef;
-    @bind = ();
-
-    $items_ref = \@items;
-
-    # interpolate!
-    my $sql = _sql_interp(@items);
-
-    return ($sql, @bind);
+    my $p = SQL::Interp::Parser->new( \@_ );
+    my $sql = $p->parse( @_ );
+    my $bind = $p->bind;
+    return ( $sql, @$bind );
 }
 
-# helper called by sql_interp()
-# @items - interpolation list
-sub _sql_interp {
-    my (@items) = @_;
+
+package SQL::Interp::Parser;
+
+use Object::Tiny::Lvalue qw( alias_id idx items bind );
+
+use Carp ();
+
+sub _error { Carp::croak 'SQL::Interp error: ', @_ }
+
+sub new {
+    my $class = shift;
+    my ( $items ) = @_;
+    return $class->SUPER::new(
+        alias_id   => 0,      # next ID to use for table alias
+        idx        => 0,      # current index in interpolation list
+        items      => $items, # current interpolation list
+        bind       => [],     # bind elements in interpolation
+    );
+}
+
+sub parse {
+    my $self = shift;
+
+    state $ident_rx = qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
 
     my $sql = '';
+    my $bind = $self->bind;
 
-    foreach my $item (@items) {
+    foreach my $item (@_) {
         if (not ref $item) {
             $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
             $sql .= $item;
             next;
         }
 
-        if (ref $item eq 'SQL::Interp::SQL') {
+        if (ref $item eq 'SQL::Interp') {
             $sql .= ' ' if $sql ne '';
-            $sql .= _sql_interp(@$item);
+            $sql .= $self->parse(@$item);
             next;
         }
 
@@ -76,32 +66,32 @@ sub _sql_interp {
             if (ref $item eq 'ARRAY') {
                 if (@$item == 0) {
                     my $dummy_expr = $not ? '1=1' : '1=0';
-                    $sql =~ s/$id_match\s+${not}IN\s*$/$dummy_expr/si or croak 'ASSERT';
+                    $sql =~ s/$ident_rx\s+${not}IN\s*$/$dummy_expr/si or Carp::croak 'ASSERT';
                 }
                 else {
                     $sql .= " (" . join(', ', map {
-                        _sql_interp_data($_);
+                        $self->bind_or_parse_value($_);
                     } @$item) . ")";
                 }
             }
             else {
-                _error_item($idx, \@items);
+                $self->error;
             }
         }
         elsif ($sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/si && ref $item eq 'HASH') {
-            _error('Hash has zero elements.') if keys %$item == 0;
+            _error 'Hash has zero elements.' if keys %$item == 0;
             $sql .= " " . join(', ', map {
                 my $key = $_;
                 my $val = $item->{$key};
                 "$key=" .
-                    _sql_interp_data($val);
+                    $self->bind_or_parse_value($val);
             } (sort keys %$item));
         }
-        elsif ($sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$id_match\s*$/si) {
+        elsif ($sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/si) {
             $item = [ $$item ] if ref $item eq 'SCALAR';
             if (ref $item eq 'ARRAY') {
                 $sql .= " VALUES(" . join(', ', map {
-                    _sql_interp_data($_);
+                    $self->bind_or_parse_value($_);
                 } @$item) . ")";
             }
             elsif (ref $item eq 'HASH') {
@@ -109,32 +99,32 @@ sub _sql_interp {
                 $sql .=
                     " (" . join(', ', @keyseq) . ")" .
                     " VALUES(" . join(', ', map {
-                        _sql_interp_data($item->{$_});
+                        $self->bind_or_parse_value($item->{$_});
                     } @keyseq) . ")";
             }
-            else { _error_item($idx, \@items); }
+            else { $self->error }
         }
         elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
             # table reference
 
             # get alias for table
             my $table_alias = undef; # alias given to table
-            my $next_item = $items[$idx + 1];
+            my $next_item = $_[$self->idx + 1];
             if(defined $next_item && ref $next_item eq '' &&
                $next_item =~ /\s*AS\b/is)
             {
                 $table_alias = undef;  # provided by client
             }
             else {
-                $table_alias = 'tbl' . $alias_id++;
+                $table_alias = 'tbl' . $self->alias_id++;
             }
 
             $sql .= ' ' unless $sql eq '';
-            $sql .= _sql_interp_resultset($item);
+            $sql .= $self->parse_resultset($item);
             $sql .= " AS $table_alias" if defined $table_alias;
         }
         elsif (ref $item eq 'SCALAR') {
-            push @bind, $$item;
+            push @$bind, $$item;
             $sql .= ' ?';
         }
         elsif (ref $item eq 'HASH') {  # e.g. WHERE {x = 3, y = 4}
@@ -150,13 +140,12 @@ sub _sql_interp {
                     }
                     elsif (ref $val eq 'ARRAY') {
                         @$val ? do {
-                            my @v = map { _sql_interp_data($_) } @$val;
+                            my @v = map { $self->bind_or_parse_value($_) } @$val;
                             $key . ' IN (' . join( ', ', @v ) . ')';
                         } : '1=0';
                     }
                     else {
-                        "$key=" .
-                        _sql_interp_data($val);
+                        $key . '=' . $self->bind_or_parse_value($val);
                     }
                 } (sort keys %$item);
                 $s = "($s)" if keys %$item > 1;
@@ -166,37 +155,36 @@ sub _sql_interp {
         }
         elsif (ref $item eq 'ARRAY') {  # result set
             $sql .= ' ' unless $sql eq '';
-            $sql .= _sql_interp_resultset($item);
+            $sql .= $self->parse_resultset($item);
         }
-        else { _error_item($idx, \@items); }
+        else { $self->error }
     }
-    continue { $idx++ }
+    continue { $self->idx++ }
 
     return $sql;
 }
 
-# sql_interp helper function.
-# Interpolate data element in aggregate variable (hashref or arrayref).
-# $ele - raw input element from aggregate.
-# returns $sql
-sub _sql_interp_data {
-    my ($ele) = @_;
-    return _sql_interp($ele) if ref $ele; # e.g. sql()
-    push @bind, $ele;
+# interpolate value from aggregate variable (hashref or arrayref)
+sub bind_or_parse_value {
+    my $self = shift;
+    my ( $elem ) = @_;
+    return $self->parse( $elem ) if ref $elem; # e.g. sql()
+    push @{ $self->bind }, $elem;
     return '?';
 }
 
-# sql_interp helper function to interpolate result set,
+# interpolate result set
 #   e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
-sub _sql_interp_resultset {
-    my($item) = @_;
+sub parse_resultset {
+    my $self = shift;
+    my ($item) = @_;
     my $sql = '';
     if (ref $item eq 'ARRAY') {
-        _error("table reference has zero rows")  # improve?
+        _error 'table reference has zero rows' # improve?
             if @$item == 0;
         my $sql2 = '';
         if(ref $item->[0] eq 'ARRAY') {
-            _error("table reference has zero columns")  # improve?
+            _error 'table reference has zero columns' # improve?
                 if @{ $item->[0] } == 0;
             for my $row ( @$item ) {
                 my $is_first_row = ($sql2 eq '');
@@ -204,12 +192,12 @@ sub _sql_interp_resultset {
                 $sql2 .=
                     "SELECT " .
                     join(', ', map {
-                        _sql_interp_data($_)
+                        $self->bind_or_parse_value($_)
                     } @$row);
             }
         }
         elsif(ref $item->[0] eq 'HASH') {
-            _error("table reference has zero columns")  # improve?
+            _error 'table reference has zero columns' # improve?
                 if keys %{ $item->[0] } == 0;
             my $first_row = $item->[0];
             for my $row ( @$item ) {
@@ -219,68 +207,30 @@ sub _sql_interp_resultset {
                     "SELECT " .
                     join(', ', map {
                         my($key, $val) = ($_, $row->{$_});
-                        my $sql3 = _sql_interp_data($val);
+                        my $sql3 = $self->bind_or_parse_value($val);
                         $sql3 .= " AS $key" if $is_first_row;
                         $sql3;
                     } (sort keys %$first_row));
              }
         }
         else {
-            _error_item($idx, $items_ref);
+            $self->error;
         }
         $sql .= ' ' unless $sql eq '';
         $sql .= "($sql2)";
     }
-    else { _error_item($idx, $items_ref); }
+    else { $self->error }
     return $sql;
 }
 
-sub sql {
-    return SQL::Interp::SQL->new(@_);
-}
-
-# helper function to throw error
-sub _error_item {
-    my ($idx, $items_ref) = @_;
-    my $prev      = $idx > 0       ? $items_ref->[$idx-1] : undef;
+sub error {
+    my $self = shift;
+    my $idx = $self->idx;
+    my $prev      = $idx > 0       ? $self->items->[$idx-1] : undef;
     my $prev_text = defined($prev) ? " following '$prev'" : "";
-    my $cur  = $items_ref->[$idx];
-    _error("SQL::Interp error: Unrecognized "
-         . "'$cur'$prev_text in interpolation list.");
+    my $cur  = $self->items->[$idx];
+    _error "Unrecognized '$cur'$prev_text in interpolation list.";
     return;
-}
-
-sub _error {
-    croak "SQL::Interp error: $_[0]";
-}
-
-
-package SQL::Interp::SQL;
-use overload '.' => \&concat, '""' => \&stringify;
-
-sub new {
-    my ($class, @list) = @_;
-
-    my $self = \@list;
-    bless $self, $class;
-    return $self;
-}
-
-# Concatenate SQL object with another expression.
-# An SQL object can be concatenated with another SQL object,
-# variable reference, or an SQL string.
-sub concat {
-    my ($a, $b, $inverted) = @_;
-
-    my @params = ( @$a, ref $b eq __PACKAGE__ ? @$b : $b );
-    @params = reverse @params if $inverted;
-    my $o = SQL::Interp::SQL->new(@params);
-    return $o;
-}
-
-sub stringify {
-    my ($a) = @_;
-    return $a;
 }
 
 1;
