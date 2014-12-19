@@ -6,9 +6,6 @@ use Carp;
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
 
-# whether TRACE_SQL is enabled
-my $trace_sql_enabled = $ENV{TRACE_SQL} || 0;
-
 # regexes
 my $id_match = qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
 my $table_name_match = $id_match;
@@ -60,10 +57,6 @@ sub sql_interp {
 
     # interpolate!
     my $sql = _sql_interp(@items);
-
-    $trace_sql_enabled
-        and print STDERR "DEBUG:interp[sql=$sql,bind="
-                         . join(':', @bind) . "]\n";
 
     return ($sql, @bind);
 }
@@ -530,17 +523,6 @@ elements may be also be L</sql>.
 
 This function is useful if you want to use raw SQL as the value in an arrayref or hashref.
 
-=head1 DEBUGGING
-
-To have the generated SQL and bind variables sent to STDOUT,
-you can set the environment variable C<TRACE_SQL> to "1"
-
- TRACE_SQL=1 perl my_script.pl
-
-Here's some example output:
-
- DEBUG:interp[sql=INSERT INTO mytable VALUES(?),bind=5]
-
 =head1 PHILOSOPHY
 
 B<The query language is SQL.> There are other modules, such as
@@ -570,8 +552,7 @@ particular dialect of SQL: if you need one of these, just use plain SQL.
 Some types of interpolation are context-sensitive and involve examination of
 your SQL fragments. The examination could fail on obscure syntax, but it is
 generally robust. Look at the examples to see the types of interpolation that
-are accepted, and if doubt, examine the SQL output yourself with the TRACE_SQL
-environment variable set. If needed, you can disable context sensitivity by inserting a
+are accepted. If needed, you can disable context sensitivity by inserting a
 null-string before a variable.
 
  "SET", "", \$x
