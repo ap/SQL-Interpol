@@ -8,7 +8,7 @@ use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 sub sql { bless [ @_ ], __PACKAGE__ }
 
 sub sql_interp {
-    my $p = SQL::Interp::Parser->new( \@_ );
+    my $p = SQL::Interp::Parser->new;
     my $sql = $p->parse( @_ );
     my $bind = $p->bind;
     return ( $sql, @$bind );
@@ -17,7 +17,7 @@ sub sql_interp {
 
 package SQL::Interp::Parser;
 
-use Object::Tiny::Lvalue qw( alias_id idx items bind );
+use Object::Tiny::Lvalue qw( alias_id bind );
 
 use Carp ();
 
@@ -25,13 +25,7 @@ sub _error { Carp::croak 'SQL::Interp error: ', @_ }
 
 sub new {
     my $class = shift;
-    my ( $items ) = @_;
-    return $class->SUPER::new(
-        alias_id   => 0,      # next ID to use for table alias
-        idx        => 0,      # current index in interpolation list
-        items      => $items, # current interpolation list
-        bind       => [],     # bind elements in interpolation
-    );
+    $class->SUPER::new( alias_id => 0, bind => [] );
 }
 
 sub parse {
@@ -42,12 +36,20 @@ sub parse {
     my $sql = '';
     my $bind = $self->bind;
 
+    my ( $item, $prev );
+    my $error = sub {
+        my $msg = "Unrecognized element '$item'";
+        $msg .= " following '$prev'" if defined $prev;
+        _error $msg;
+    };
+
     while ( @_ ) {
-        my $item = shift @_;
+        $item = shift @_;
 
         if (not ref $item) {
             $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
             $sql .= $item;
+            $prev = $item;
             next;
         }
 
@@ -63,7 +65,7 @@ sub parse {
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
                 : 'REF'    eq $type && 'ARRAY' eq ref $$item ? @$$item
-                : $self->error;
+                : $error->();
             $sql .= @value
                 ? $1 . ' (' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')'
                 : ( $2 ? ' 1=1' : ' 1=0' );
@@ -84,13 +86,13 @@ sub parse {
                     $sql .= ' (' . join( ', ', @key ) . ')';
                     @$item{ @key };
                 }
-                : $self->error;
+                : $error->();
             $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
         elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
             my $do_alias = ( $_[0] // '' ) !~ /\s*AS\b/i;
             $sql .= ' ' unless $sql eq '';
-            $sql .= $self->parse_resultset( $item );
+            $sql .= $self->parse_resultset( $item ) // $error->();
             $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
         }
         elsif (ref $item eq 'SCALAR') {
@@ -125,11 +127,10 @@ sub parse {
         }
         elsif (ref $item eq 'ARRAY') {  # result set
             $sql .= ' ' unless $sql eq '';
-            $sql .= $self->parse_resultset($item);
+            $sql .= $self->parse_resultset( $item ) // $error->();
         }
-        else { $self->error }
+        else { $error->() }
     }
-    continue { $self->idx++ }
 
     return $sql;
 }
@@ -183,24 +184,12 @@ sub parse_resultset {
                     } (sort keys %$first_row));
              }
         }
-        else {
-            $self->error;
-        }
+        else { return }
         $sql .= ' ' unless $sql eq '';
         $sql .= "($sql2)";
     }
-    else { $self->error }
+    else { return }
     return $sql;
-}
-
-sub error {
-    my $self = shift;
-    my $idx = $self->idx;
-    my $prev      = $idx > 0       ? $self->items->[$idx-1] : undef;
-    my $prev_text = defined($prev) ? " following '$prev'" : "";
-    my $cur  = $self->items->[$idx];
-    _error "Unrecognized '$cur'$prev_text in interpolation list.";
-    return;
 }
 
 1;
