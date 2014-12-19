@@ -6,7 +6,6 @@ use Carp;
 use Sub::Exporter -setup => {
     exports => [ qw{  sql_interp
                       sql_interp_strict
-                      sql_type
                       sql } ],
 };
 
@@ -31,11 +30,6 @@ my $idx = 0;
 # [local to sql_interp functions]
 my $items_ref = undef;
 
-# whether typed sql_type() ever used (if so,
-# format of @bind result is more complicated)
-# [local to sql_interp functions]
-my $is_var_used = 0;
-
 # state item (SQL::Iterpolate or DBI handle) used in interpolation.
 # [local to sql_interp functions]
 my $state = undef;
@@ -43,26 +37,6 @@ my $state = undef;
 # bind elements in interpolation
 # [local to sql_interp functions]
 my @bind;
-
-# only used by DBIx::Interp, so not further documented here
-sub new {
-    my $class = shift;
-
-    # process special params.
-    my $dbh;
-    while (ref $_[0] ne '') {
-        if (UNIVERSAL::isa($_[0], 'DBI::db')) {
-            $dbh = shift;
-        }
-    }
-    my %params = @_;
-
-    # build object
-    my $self = bless {
-        dbh                   => $dbh,
-    }, $class;
-    return $self;
-}
 
 # note: sql_interp is not reentrant.
 sub sql_interp {
@@ -72,7 +46,6 @@ sub sql_interp {
     $alias_id = 0;
     $idx = 0;
     $items_ref = undef;
-    $is_var_used = 0;
     $state = undef;
     @bind = ();
 
@@ -91,14 +64,6 @@ sub sql_interp {
 
     # interpolate!
     my $sql = _sql_interp(@items);
-
-    # convert bind values to complex format (if needed)
-    if ($is_var_used) {
-        for my $val (@bind) {
-            my $valcopy = $val;
-            ! ref $val and $val = [$val, sql_type(\$valcopy)];
-        }
-    }
 
     $trace_sql_enabled
         and print STDERR "DEBUG:interp[sql=$sql,bind="
@@ -139,16 +104,6 @@ sub _sql_interp {
     my $sql = '';
 
     foreach my $item (@items) {
-        my $varobj;
-        my $bind_size = @bind;
-        if (ref $item eq 'SQL::Interp::Variable') {
-            unless (keys %$item == 1 && defined($item->{value})) {
-                $varobj = $item;
-                $is_var_used = 1;
-            }
-            $item = $item->{value};
-        }
-
         if (ref $item eq 'SQL::Interp::SQL') {
             my ($sql2, @bind2) = _sql_interp(@$item);
             $sql .= ' ' if $sql ne '';
@@ -263,13 +218,6 @@ sub _sql_interp {
             $sql .= $item;
         }
 
-        # attach $varobj to any bind values it generates
-        if ($varobj) {
-            my $num_pushed = @bind - $bind_size;
-            for my $val (@bind[-$num_pushed..-1]) {
-                $val = [$val, $varobj];
-            }
-        }
         $idx++;
     }
 
@@ -285,7 +233,6 @@ sub _sql_interp_data {
     if (ref $ele) {  # e.g. sql()
         my ($sql2, @bind2) = _sql_interp($ele);
         push @bind, @bind2;
-        $is_var_used = 1 if ref $bind2[0];
         return $sql2;
     }
     else {
@@ -365,10 +312,6 @@ sub sql {
     return SQL::Interp::SQL->new(@_);
 }
 
-sub sql_type {
-    return SQL::Interp::Variable->new(@_);
-}
-
 # helper function to throw error
 sub _error_item {
     my ($idx, $items_ref) = @_;
@@ -382,17 +325,6 @@ sub _error_item {
 
 sub _error {
     croak "SQL::Interp error: $_[0]";
-}
-
-package SQL::Interp::Variable;
-
-sub new {
-    my ($class, $value, %params) = @_;
-    SQL::Interp::_error(
-        "Value '$value' in sql_type constructor is not a reference")
-        if ! ref $value;
-    my $self = bless {value => $value, %params}, $class;
-    return $self;
 }
 
 
@@ -481,8 +413,7 @@ A plain string containing an SQL fragment such as C<SELECT * FROM mytable WHERE>
 
 =item B<Variable reference>
 
-A scalarref, arrayref, hashref, or A L</sql_type> object referring to data to
-interpolate between the SQL.
+A scalarref, arrayref, or hashref referring to data to interpolate between the SQL.
 
 =item B<Another interpolation list>
 
@@ -616,8 +547,8 @@ result SQL string, negating the security and performance benefits
 of binding values.
 
 In contrast, any scalar values I<inside> an arrayref or hashref are by
-default treated as binding variables, not SQL. The contained
-elements may be also be L</sql_type> or L</sql>.
+default treated as binding variables, not SQL.  The contained
+elements may be also be L</sql>.
 
 =head2 C<sql_interp_strict>
 
@@ -653,48 +584,6 @@ To work under strict mode, you need to concatenate the strings instead:
   # OUT: 'INSERT INTO mytable (x, y) VALUES(?, CURRENT_TIMESTAMP)', $x
 
 This function is useful if you want to use raw SQL as the value in an arrayref or hashref.
-
-=head2 C<sql_type>
-
-  my $sqlvar = sql_type($value_ref, type => $sql_type, %params);
-
-This function provides a general way to represent a binding variable I<along
-with> metadata. It is necessary in rare applications which you need to
-explicity give the bind type of a SQL variable.
-
-$value_ref - variable reference contained
-
-$sql_type - any DBI SQL_DATA_TYPE (e.g. SQL_INTEGER). Optional.
-Default is undef.
-
-Any other named parameters (%params) passed in will be saved into the
-object as attributes.
-
-sql_type objects are useful only in special cases where additional
-information should be tagged onto the variable. For example, DBI
-allows bind variables to be given an explicit type:
-
-  my ($sql, @bind) = sql_interp 'SELECT * FROM mytable WHERE',
-      'x=', \$x, 'AND y=', sql_type(\$y, SQL_VARCHAR), 'AND z IN',
-      sql_type([1, 2], SQL_INTEGER);
-  # RESULT: @bind =
-  #   ([$x, sql_type(\$x)], [$y, sql_type(\$y, type => SQL_VARCHAR)],
-  #    [1, sql_type([1, 2], type => SQL_INTEGER)],
-  #    [2, sql_type([1, 2], type => SQL_INTEGER)]);
-
-  my $idx = 1;
-  for my $var (@bind) {
-      $sth->bind_param($idx++, $var->[0], $var->[1]->{type});
-  }
-  $sth->execute();
-  my $ret = $sth->selectall_arrayref();
-
-If the interpolation list contains at least one sql_type object, then
-all the variable references are transparently converted into sql_type
-objects, and the elements of @bind take a special form: an arrayref
-consisting of the bind value and the sql_type object that generated the
-bind value. Note that a single sql_type holding an aggregate (arrayref
-or hashref) may generate multiple bind values.
 
 =head1 DEBUGGING
 
@@ -749,15 +638,8 @@ syntax, so in such case, use a more direct syntax:
   sql_interp '...WHERE', {x => $x, y => $y}, 'AND y = z';
   # bad--trying to impose a hashref but keys must be scalars and be unique
   sql_interp '...WHERE',
-      {sql_type(\$x) => sql('x'), y => $y, y => sql('z')};
+      {sql($x) => sql('x'), y => $y, y => sql('z')};
 
 In the cases where this module parses or generates SQL fragments, this module
 should work for many databases, but is known to work well on MySQL and
 PostgreSQL.
-
-=head1 SEE ALSO
-
-L<DBIx::Interp> allows DBI methods to accept an
-C<sql_interp()>-like interpolation list rather than the traditional
-($statement, \%attr, @bind_values) parameter list. However, consider
-using L<DBIx::Simple> instead-- it even more user friendly.

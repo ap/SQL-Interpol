@@ -1,7 +1,6 @@
-# Tests of SQL::Interp
-
 use strict;
 use warnings;
+
 use Test::More 0.88; # for done_testing
 use Test::Differences;
 use SQL::Interp ':all';
@@ -12,8 +11,6 @@ BEGIN {
         ':all' ); # 0.3
 }
 
-my $interp = SQL::Interp->new;
-
 my $x = 5;
 my $y = 6;
 my $v0 = [];
@@ -23,15 +20,6 @@ my $h0 = {};
 
 my $h = {one => 1, two => 2};
 my $hi = make_hash_info($h);
-
-my $var1 = sql_type(\$x);
-my $var2 = sql_type(\$x, type => 1);
-
-my $h2i = make_hash_info(
-    { one => 1, two => $var2, three => sql('3') },
-    { one => '?', two => '?', three => '3' },
-    { one => [[1, sql_type(\1)]], two => [[${$var2->{value}}, $var2]] }
-);
 
 sub make_hash_info {
     my ( $hash, $place_of, $bind_of ) = @_;
@@ -109,11 +97,6 @@ interp_test(['INSERT INTO mytable', $h],
             ["INSERT INTO mytable ($hi->{keys}[0], $hi->{keys}[1]) VALUES(?, ?)",
                  @{$hi->{values}}],
             'INSERT hashref of size > 0');
-interp_test(['INSERT INTO mytable', $h2i->{hashref}],
-            ["INSERT INTO mytable ($h2i->{keys}[0], $h2i->{keys}[1], $h2i->{keys}[2]) " .
-             "VALUES($h2i->{places}->[0], $h2i->{places}->[1],  $h2i->{places}->[2])",
-             @{$h2i->{binds}}],
-            'INSERT hashref of sql_type + sql()');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
             'INSERT hashref with sql()');
@@ -172,9 +155,9 @@ interp_test(['UPDATE mytable SET', $h],
             ["UPDATE mytable SET $hi->{keys}[0]=?, $hi->{keys}[1]=?", @{$hi->{values}}],
             'SET hashref');
 interp_test(['UPDATE mytable SET',
-                {one => 1, two => $var2, three => sql('3')}],
-            ['UPDATE mytable SET one=?, three=3, two= ?',
-                [1, sql_type(\1)], [${$var2->{value}}, $var2]],
+                {one => 1, two => $x, three => sql('3')}],
+            ['UPDATE mytable SET one=?, three=3, two=?',
+                1, $x],
             'SET hashref of sql_type types, sql()');
 #FIX--what if size of hash is zero? error?
 
@@ -206,29 +189,6 @@ interp_test(['WHERE', $h2ci->{hashref}],
 interp_test(['WHERE x=', \$x],
             ['WHERE x= ?', $x],
             'WHERE x=scalarref');
-
-# sql_type
-interp_test(['WHERE x=', \$x, 'AND', 'y=', sql_type(\$y)],
-            ['WHERE x= ? AND y= ?', $x, $y],
-            'WHERE \$x, sql_type');
-interp_test(['WHERE x=', \$x, 'AND', 'y=', $var2],
-            ['WHERE x= ? AND y= ?', [$x, sql_type(\$x)], [${$var2->{value}}, $var2]],
-            'WHERE \$x, sql_type typed');
-interp_test(['WHERE', {x => $x, y => $var2}, 'AND z=', \$x],
-            ['WHERE (x=? AND y= ?) AND z= ?',
-                [$x, sql_type(\$x)], [${$var2->{value}}, $var2], [$x, sql_type(\$x)]],
-            'WHERE hashref of \$x, sql_type typed');
-my $h5i = make_hash_info(
-    {x => $x, y => [3, $var2]},
-    {x => 'x=?', y => 'y IN (?,  ?)'},
-    {x => [[$x, sql_type(\$x)]], y => [[3, sql_type(\3)], [${$var2->{value}}, $var2]]}
-);
-interp_test(['WHERE', $h5i->{hashref}],
-            ["WHERE ($h5i->{places}[0] AND $h5i->{places}[1])", @{$h5i->{binds}}[0,1,2]],
-            'WHERE hashref of arrayref of sql_type typed');
-interp_test(['WHERE', {x => $x, y => sql('z')}],
-            ['WHERE (x=? AND y=z)', $x],
-            'WHERE hashref of \$x, sql()');
 
 # table references
 error_test(['FROM', []], qr/table reference has zero rows/, 'v 0');
@@ -276,7 +236,6 @@ sub interp_test {
     my ( $snips, $expect, $name ) = @_;
     local $Test::Builder::Level = $Test::Builder::Level + 1;
     eq_or_diff [ sql_interp @$snips ], $expect, $name;
-    eq_or_diff [ $interp->sql_interp( @$snips ) ], $expect, "$name OO";
 }
 
 sub error_test {
