@@ -119,9 +119,36 @@ sub parse {
             }
         }
         elsif (ref $item eq 'ARRAY') {  # result set
+            _error 'table reference has zero rows' if not @$item; # improve?
+
+            # e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
             my $do_alias = $sql =~ /(?:\bFROM|JOIN)\s*$/i && ( $_[0] // '' ) !~ /\s*AS\b/i;
+
             $sql .= ' ' unless $sql eq '';
-            $sql .= $self->parse_resultset( $item ) // $error->();
+            $sql .= '(';
+
+            my $row0  = $item->[0];
+            my $type0 = ref $row0;
+
+            if ( 'ARRAY' eq $type0 ) {
+                _error 'table reference has zero columns' if not @$row0; # improve?
+                $sql .= join ' UNION ALL ', map {
+                    'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_;
+                } @$item;
+            }
+            elsif ( 'HASH' eq $type0 ) {
+                _error 'table reference has zero columns' if not keys %$row0; # improve?
+                my @k = sort keys %$row0;
+                $sql .= join ' UNION ALL ', do {
+                    my @v = map { $self->bind_or_parse_value( $_ ) } @$row0{ @k };
+                    'SELECT ' . join ', ', map "$v[$_] AS $k[$_]", 0 .. $#k;
+                }, map {
+                    'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_{ @k };
+                } @$item[ 1 .. $#$item ];
+            }
+            else { $error->() }
+
+            $sql .= ')';
             $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
         }
         else { $error->() }
@@ -137,39 +164,6 @@ sub bind_or_parse_value {
     return $self->parse( $elem ) if ref $elem; # e.g. sql()
     push @{ $self->bind }, $elem;
     return '?';
-}
-
-# interpolate result set
-#   e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
-sub parse_resultset {
-    my $self = shift;
-    my ( $rows ) = @_;
-
-    _error 'table reference has zero rows' if not @$rows; # improve?
-
-    my $sql = '';
-    my $row0  = $rows->[0];
-    my $type0 = ref $row0;
-
-    if ( 'ARRAY' eq $type0 ) {
-        _error 'table reference has zero columns' if not @$row0; # improve?
-        $sql = join ' UNION ALL ', map {
-            'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_;
-        } @$rows;
-    }
-    elsif ( 'HASH' eq $type0 ) {
-        _error 'table reference has zero columns' if not keys %$row0; # improve?
-        my @k = sort keys %$row0;
-        $sql = join ' UNION ALL ', do {
-            my @v = map { $self->bind_or_parse_value($_) } @$row0{ @k };
-            'SELECT ' . join ', ', map "$v[$_] AS $k[$_]", 0 .. $#k;
-        }, map {
-            'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_{ @k };
-        } @$rows[ 1 .. $#$rows ];
-    }
-    else { return }
-
-    return "($sql)";
 }
 
 1;
