@@ -69,12 +69,6 @@ sub parse {
                 ? $1 . ' (' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')'
                 : ( $2 ? ' 1=1' : ' 1=0' );
         }
-        elsif ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i && ref $item eq 'HASH' ) {
-            _error 'Hash has zero elements.' if not keys %$item;
-            my @k = sort keys %$item;
-            my @v = map { $self->bind_or_parse_value( $_ ) } @$item{ @k };
-            $sql .= ' ' . join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
-        }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
             my $type = ref $item;
             my @value
@@ -93,29 +87,30 @@ sub parse {
             $sql .= ' ?';
         }
         elsif (ref $item eq 'HASH') {  # e.g. WHERE {x = 3, y = 4}
-            if (keys %$item == 0) {
+            if ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i ) {
+                _error 'Hash has zero elements.' if not keys %$item;
+                my @k = sort keys %$item;
+                my @v = map { $self->bind_or_parse_value( $_ ) } @$item{ @k };
+                $sql .= ' ' . join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
+            }
+            elsif ( not keys %$item ) {
                 $sql .= ' 1=1';
             }
             else {
-                my $s = join ' AND ', map {
-                    my $key = $_;
-                    my $val = $item->{$key};
-                    if (! defined $val) {
-                        "$key IS NULL";
-                    }
-                    elsif (ref $val eq 'ARRAY') {
-                        @$val ? do {
-                            my @v = map { $self->bind_or_parse_value($_) } @$val;
-                            $key . ' IN (' . join( ', ', @v ) . ')';
+                my $cond = join ' AND ', map {
+                    my $expr = $_;
+                    my $eval = $item->{ $expr };
+                    ( not defined $eval )  ? $expr . ' IS NULL'
+                    : 'ARRAY' ne ref $eval ? $expr . '=' . $self->bind_or_parse_value( $eval )
+                    : do {
+                        @$eval ? do {
+                            my @v = map { $self->bind_or_parse_value( $_ ) } @$eval;
+                            $expr . ' IN (' . join( ', ', @v ) . ')';
                         } : '1=0';
                     }
-                    else {
-                        $key . '=' . $self->bind_or_parse_value($val);
-                    }
-                } (sort keys %$item);
-                $s = "($s)" if keys %$item > 1;
-                $s = " $s";
-                $sql .= $s;
+                } sort keys %$item;
+                $cond = "($cond)" if keys %$item > 1;
+                $sql .= ' ' . $cond;
             }
         }
         elsif (ref $item eq 'ARRAY') {  # result set
