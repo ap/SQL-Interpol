@@ -45,21 +45,21 @@ sub parse {
 
     while ( @_ ) {
         $item = shift @_;
+        my $type = ref $item;
 
-        if (not ref $item) {
+        if ( not $type ) {
             $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
             $sql .= $item;
             $prev = $item;
             next;
         }
 
-        if ( ref $item eq 'SQL::Interp' ) {
+        if ( 'SQL::Interp' eq $type ) {
             unshift @_, @$item;
             next;
         }
 
         if ( $sql =~ s/(\s*$ident_rx\s+(NOT\s+)?IN)\s*$//i ) {
-            my $type = ref $item;
             my @value
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
@@ -70,7 +70,6 @@ sub parse {
                 : ( $2 ? ' 1=1' : ' 1=0' );
         }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
-            my $type = ref $item;
             my @value
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
@@ -82,11 +81,11 @@ sub parse {
                 : $error->();
             $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
         }
-        elsif (ref $item eq 'SCALAR') {
+        elsif ( 'SCALAR' eq $type ) {
             push @$bind, $$item;
             $sql .= ' ?';
         }
-        elsif (ref $item eq 'HASH') {  # e.g. WHERE {x = 3, y = 4}
+        elsif ( 'HASH' eq $type ) {  # e.g. WHERE {x = 3, y = 4}
             if ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i ) {
                 _error 'Hash has zero elements.' if not keys %$item;
                 my @k = sort keys %$item;
@@ -113,7 +112,7 @@ sub parse {
                 $sql .= ' ' . $cond;
             }
         }
-        elsif (ref $item eq 'ARRAY') {  # result set
+        elsif ( 'ARRAY' eq $type ) {  # result set
             _error 'table reference has zero rows' if not @$item; # improve?
 
             # e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
