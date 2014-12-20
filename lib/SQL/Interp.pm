@@ -53,9 +53,8 @@ sub parse {
             next;
         }
 
-        if (ref $item eq 'SQL::Interp') {
-            $sql .= ' ' if $sql ne '';
-            $sql .= $self->parse(@$item);
+        if ( ref $item eq 'SQL::Interp' ) {
+            unshift @_, @$item;
             next;
         }
 
