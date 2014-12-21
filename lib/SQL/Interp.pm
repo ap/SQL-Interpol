@@ -53,120 +53,121 @@ sub _sql_interp {
     my $sql = '';
 
     foreach my $item (@items) {
+        if (not ref $item) {
+            $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
+            $sql .= $item;
+            next;
+        }
+
         if (ref $item eq 'SQL::Interp::SQL') {
             $sql .= ' ' if $sql ne '';
             $sql .= _sql_interp(@$item);
+            next;
         }
-        elsif (ref $item) {
-            if ($sql =~ /\b(NOT\s+)?IN\s*$/si) {
-                my $not = quotemeta($1 || '');
 
-                $item = [ $$item ] if ref $item eq 'SCALAR';
+        if ($sql =~ /\b(NOT\s+)?IN\s*$/si) {
+            my $not = quotemeta($1 || '');
 
-                # allow double references
-                $item = $$item if ref $item eq 'REF' ;
+            $item = [ $$item ] if ref $item eq 'SCALAR';
 
-                if (ref $item eq 'ARRAY') {
-                    if (@$item == 0) {
-                        my $dummy_expr = $not ? '1=1' : '1=0';
-                        $sql =~ s/$id_match\s+${not}IN\s*$/$dummy_expr/si or croak 'ASSERT';
-                    }
-                    else {
-                        $sql .= " (" . join(', ', map {
-                            _sql_interp_data($_);
-                        } @$item) . ")";
-                    }
+            # allow double references
+            $item = $$item if ref $item eq 'REF' ;
+
+            if (ref $item eq 'ARRAY') {
+                if (@$item == 0) {
+                    my $dummy_expr = $not ? '1=1' : '1=0';
+                    $sql =~ s/$id_match\s+${not}IN\s*$/$dummy_expr/si or croak 'ASSERT';
                 }
                 else {
-                    _error_item($idx, \@items);
-                }
-            }
-            elsif ($sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/si && ref $item eq 'HASH') {
-                _error('Hash has zero elements.') if keys %$item == 0;
-                $sql .= " " . join(', ', map {
-                    my $key = $_;
-                    my $val = $item->{$key};
-                    "$key=" .
-                        _sql_interp_data($val);
-                } (sort keys %$item));
-            }
-            elsif ($sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$id_match\s*$/si) {
-                $item = [ $$item ] if ref $item eq 'SCALAR';
-                if (ref $item eq 'ARRAY') {
-                    $sql .= " VALUES(" . join(', ', map {
+                    $sql .= " (" . join(', ', map {
                         _sql_interp_data($_);
                     } @$item) . ")";
                 }
-                elsif (ref $item eq 'HASH') {
-                    my @keyseq = sort keys %$item;
-                    $sql .=
-                        " (" . join(', ', @keyseq) . ")" .
-                        " VALUES(" . join(', ', map {
-                            _sql_interp_data($item->{$_});
-                        } @keyseq) . ")";
-                }
-                else { _error_item($idx, \@items); }
             }
-            elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
-                # table reference
-
-                # get alias for table
-                my $table_alias = undef; # alias given to table
-                my $next_item = $items[$idx + 1];
-                if(defined $next_item && ref $next_item eq '' &&
-                   $next_item =~ /\s*AS\b/is)
-                {
-                    $table_alias = undef;  # provided by client
-                }
-                else {
-                    $table_alias = 'tbl' . $alias_id++;
-                }
-
-                $sql .= ' ' unless $sql eq '';
-                $sql .= _sql_interp_resultset($item);
-                $sql .= " AS $table_alias" if defined $table_alias;
+            else {
+                _error_item($idx, \@items);
             }
-            elsif (ref $item eq 'SCALAR') {
-                push @bind, $$item;
-                $sql .= ' ?';
+        }
+        elsif ($sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/si && ref $item eq 'HASH') {
+            _error('Hash has zero elements.') if keys %$item == 0;
+            $sql .= " " . join(', ', map {
+                my $key = $_;
+                my $val = $item->{$key};
+                "$key=" .
+                    _sql_interp_data($val);
+            } (sort keys %$item));
+        }
+        elsif ($sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$id_match\s*$/si) {
+            $item = [ $$item ] if ref $item eq 'SCALAR';
+            if (ref $item eq 'ARRAY') {
+                $sql .= " VALUES(" . join(', ', map {
+                    _sql_interp_data($_);
+                } @$item) . ")";
             }
-            elsif (ref $item eq 'HASH') {  # e.g. WHERE {x = 3, y = 4}
-                if (keys %$item == 0) {
-                    $sql .= ' 1=1';
-                }
-                else {
-                    my $s = join ' AND ', map {
-                        my $key = $_;
-                        my $val = $item->{$key};
-                        if (! defined $val) {
-                            "$key IS NULL";
-                        }
-                        elsif (ref $val eq 'ARRAY') {
-                            _sql_interp_list($key, $val);
-                        }
-                        else {
-                            "$key=" .
-                            _sql_interp_data($val);
-                        }
-                    } (sort keys %$item);
-                    $s = "($s)" if keys %$item > 1;
-                    $s = " $s";
-                    $sql .= $s;
-                }
-            }
-            elsif (ref $item eq 'ARRAY') {  # result set
-                $sql .= ' ' unless $sql eq '';
-                $sql .= _sql_interp_resultset($item);
+            elsif (ref $item eq 'HASH') {
+                my @keyseq = sort keys %$item;
+                $sql .=
+                    " (" . join(', ', @keyseq) . ")" .
+                    " VALUES(" . join(', ', map {
+                        _sql_interp_data($item->{$_});
+                    } @keyseq) . ")";
             }
             else { _error_item($idx, \@items); }
         }
-        else {
-            $sql .= ' ' unless $sql =~ /(^|\s)$/ || $item =~ /^\s/;  # style
-            $sql .= $item;
-        }
+        elsif ($sql =~ /(?:\bFROM|JOIN)\s*$/si) {
+            # table reference
 
-        $idx++;
+            # get alias for table
+            my $table_alias = undef; # alias given to table
+            my $next_item = $items[$idx + 1];
+            if(defined $next_item && ref $next_item eq '' &&
+               $next_item =~ /\s*AS\b/is)
+            {
+                $table_alias = undef;  # provided by client
+            }
+            else {
+                $table_alias = 'tbl' . $alias_id++;
+            }
+
+            $sql .= ' ' unless $sql eq '';
+            $sql .= _sql_interp_resultset($item);
+            $sql .= " AS $table_alias" if defined $table_alias;
+        }
+        elsif (ref $item eq 'SCALAR') {
+            push @bind, $$item;
+            $sql .= ' ?';
+        }
+        elsif (ref $item eq 'HASH') {  # e.g. WHERE {x = 3, y = 4}
+            if (keys %$item == 0) {
+                $sql .= ' 1=1';
+            }
+            else {
+                my $s = join ' AND ', map {
+                    my $key = $_;
+                    my $val = $item->{$key};
+                    if (! defined $val) {
+                        "$key IS NULL";
+                    }
+                    elsif (ref $val eq 'ARRAY') {
+                        _sql_interp_list($key, $val);
+                    }
+                    else {
+                        "$key=" .
+                        _sql_interp_data($val);
+                    }
+                } (sort keys %$item);
+                $s = "($s)" if keys %$item > 1;
+                $s = " $s";
+                $sql .= $s;
+            }
+        }
+        elsif (ref $item eq 'ARRAY') {  # result set
+            $sql .= ' ' unless $sql eq '';
+            $sql .= _sql_interp_resultset($item);
+        }
+        else { _error_item($idx, \@items); }
     }
+    continue { $idx++ }
 
     return $sql;
 }
