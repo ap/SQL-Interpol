@@ -5,12 +5,6 @@ use Test::More 0.88; # for done_testing
 use Test::Differences;
 use SQL::Interp ':all';
 
-# test of use parameters
-BEGIN {
-    use_ok('SQL::Interp',
-        ':all' ); # 0.3
-}
-
 my $x = 5;
 my $y = 6;
 my $v0 = [];
