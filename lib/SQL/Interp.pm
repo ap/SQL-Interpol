@@ -42,7 +42,9 @@ sub parse {
     my $sql = '';
     my $bind = $self->bind;
 
-    foreach my $item (@_) {
+    while ( @_ ) {
+        my $item = shift @_;
+
         if (not ref $item) {
             $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
             $sql .= $item;
