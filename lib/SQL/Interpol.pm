@@ -1,27 +1,27 @@
 use 5.012;
 use warnings;
 
-package SQL::Interp;
+package SQL::Interpol;
 
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
 sub sql { bless [ @_ ], __PACKAGE__ }
 
 sub sql_interp {
-    my $p = SQL::Interp::Parser->new;
+    my $p = SQL::Interpol::Parser->new;
     my $sql = $p->parse( @_ );
     my $bind = $p->bind;
     return ( $sql, @$bind );
 }
 
 
-package SQL::Interp::Parser;
+package SQL::Interpol::Parser;
 
 use Object::Tiny::Lvalue qw( alias_id bind );
 
 use Carp ();
 
-sub _error { Carp::croak 'SQL::Interp error: ', @_ }
+sub _error { Carp::croak 'SQL::Interpol error: ', @_ }
 
 sub new {
     my $class = shift;
@@ -54,7 +54,7 @@ sub parse {
             next;
         }
 
-        if ( 'SQL::Interp' eq $type ) {
+        if ( 'SQL::Interpol' eq $type ) {
             unshift @_, @$item;
             next;
         }
@@ -166,7 +166,7 @@ __END__
 
 =head1 SYNOPSIS
 
-  use SQL::Interp ':all';
+  use SQL::Interpol ':all';
 
   my ($sql, @bind) = sql_interp 'INSERT INTO table', \%item;
   my ($sql, @bind) = sql_interp 'UPDATE table SET',  \%item, 'WHERE y <> ', \2;
@@ -185,7 +185,7 @@ while easily providing ready access to all SQL features.
 
 =head1 INTERFACE
 
-The recommended way to use SQL::Interp is via its L<DBIx::Simple> integration,
+The recommended way to use SQL::Interpol is via its L<DBIx::Simple> integration,
 which provides an excellent alternative to plain DBI access:
 
   use DBIx::Simple;
@@ -378,12 +378,12 @@ rendering the meaning less clear:
   Plain SQL:
   "lname LIKE '%son' AND (age >= 10 AND age <= 20)"
 
-In contrast, SQL::Interp does not abstract away your SQL but rather makes it
-easier to interpolate Perl variables into it. Now, SQL::Interp I<does> overload
+In contrast, SQL::Interpol does not abstract away your SQL but rather makes it
+easier to interpolate Perl variables into it. Now, SQL::Interpol I<does> overload
 some meaning into C<{}>, C<[]> and C<\>, but the aim is to make common obvious
 cases easier to read and write E<mdash> and leave the rest to raw SQL.
 
-This also means SQL::Interp does not need to support every last feature of each
+This also means SQL::Interpol does not need to support every last feature of each
 particular dialect of SQL: if you need one of these, just use plain SQL.
 
 =head1 LIMITATIONS

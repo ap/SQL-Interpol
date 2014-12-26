@@ -3,7 +3,7 @@ use warnings;
 
 use Test::More 0.88; # for done_testing
 use Test::Differences;
-use SQL::Interp ':all';
+use SQL::Interpol ':all';
 
 my $x = 5;
 my $y = 6;
