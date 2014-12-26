@@ -13,24 +13,6 @@ my $v2 = ['one', sql('two')];
 my $h0 = {};
 
 my $h = {one => 1, two => 2};
-my $hi = make_hash_info($h);
-
-sub make_hash_info {
-    my ( $hash, $place_of, $bind_of ) = @_;
-    my @k = sort keys %$hash;
-    my $info = {
-        hashref => $hash,
-        keys    => \@k,
-        values  => [ @$hash{ @k } ],
-        places  => [ @$place_of{ @k } ],
-        binds   => [
-            map { defined $_ ? @$_ : () }
-            map { $bind_of->{ $_ } } # autovivifies
-            @k
-        ],
-    };
-    return $info;
-}
 
 #== trivial cases
 interp_test([],
@@ -88,8 +70,7 @@ interp_test(['INSERT INTO mytable', $h0],
             ['INSERT INTO mytable () VALUES()'],
             'INSERT hashref of size = 0');
 interp_test(['INSERT INTO mytable', $h],
-            ["INSERT INTO mytable ($hi->{keys}[0], $hi->{keys}[1]) VALUES(?, ?)",
-                 @{$hi->{values}}],
+            ["INSERT INTO mytable (one, two) VALUES(?, ?)", 1, 2],
             'INSERT hashref of size > 0');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
@@ -146,7 +127,7 @@ interp_test(['WHERE field in', $v0],
 
 # SET
 interp_test(['UPDATE mytable SET', $h],
-            ["UPDATE mytable SET $hi->{keys}[0]=?, $hi->{keys}[1]=?", @{$hi->{values}}],
+            ['UPDATE mytable SET one=?, two=?', 1, 2],
             'SET hashref');
 interp_test(['UPDATE mytable SET',
                 {one => 1, two => $x, three => sql('3')}],
@@ -160,23 +141,13 @@ interp_test(['WHERE', $h0],
             ['WHERE 1=1'],
             'WHERE hashref of size = 0');
 interp_test(['WHERE', $h],
-            ["WHERE ($hi->{keys}[0]=? AND $hi->{keys}[1]=?)", @{$hi->{values}}],
+            ['WHERE (one=? AND two=?)', 1, 2],
             'WHERE hashref of size > 0');
-my $h2bi = make_hash_info(
-    {x => 1, y => sql('2')},
-    {x => 'x=?', y => 'y=2'},
-    {x => [1]}
-);
-interp_test(['WHERE', $h2bi->{hashref}],
-            ["WHERE ($h2bi->{places}[0] AND $h2bi->{places}[1])", @{$h2bi->{binds}}],
+interp_test(['WHERE', {x => 1, y => sql('2')}],
+            ["WHERE (x=? AND y=2)", 1],
             'WHERE hashref sql()');
-my $h2ci = make_hash_info(
-    {x => 1, y => undef},
-    {x => 'x=?', y => 'y IS NULL'},
-    {x => [1]}
-);
-interp_test(['WHERE', $h2ci->{hashref}],
-            ["WHERE ($h2ci->{places}[0] AND $h2ci->{places}[1])", @{$h2ci->{binds}}],
+interp_test(['WHERE', {x => 1, y => undef}],
+            ["WHERE (x=? AND y IS NULL)", 1],
             'WHERE hashref of NULL');
 
 # WHERE x=
@@ -195,20 +166,18 @@ interp_test(['',     [[1]]], ['(SELECT ?)', 1], 'vv 1 1 (resultset)');
 interp_test(['FROM', [{a => 1}]], ['FROM (SELECT ? AS a) AS tbl0', 1], 'vh 1 1');
 interp_test(['',     [{a => 1}]], ['(SELECT ? AS a)', 1], 'vh 1 1 (resultset)');
 interp_test(['FROM', [[1,2]]], ['FROM (SELECT ?, ?) AS tbl0', 1, 2], 'vv 1 2');
-interp_test(['FROM', [$h]], ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1]) AS tbl0",
-    @{$hi->{values}}], 'vh 1 2');
-interp_test(['',     [$h]], ["(SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1])",
-    @{$hi->{values}}], 'vh 1 2 (resultset)');
+interp_test(['FROM', [$h]], ["FROM (SELECT ? AS one, ? AS two) AS tbl0", 1, 2], 'vh 1 2');
+interp_test(['',     [$h]], ["(SELECT ? AS one, ? AS two)", 1, 2], 'vh 1 2 (resultset)');
 interp_test(['FROM', [[1,2],[3,4]]],
     ['FROM (SELECT ?, ? UNION ALL SELECT ?, ?) AS tbl0', 1, 2, 3, 4], 'vv 2 2');
 interp_test(['', [[1,2],[3,4]]],
     ['(SELECT ?, ? UNION ALL SELECT ?, ?)', 1, 2, 3, 4], 'vv 2 2 (resultset)');
 interp_test(['FROM', [$h,$h]],
-    ["FROM (SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1] UNION ALL SELECT ?, ?) AS tbl0",
-    @{$hi->{values}}, @{$hi->{values}}], 'vh 2 2');
+    ["FROM (SELECT ? AS one, ? AS two UNION ALL SELECT ?, ?) AS tbl0",
+    1, 2, 1, 2], 'vh 2 2');
 interp_test(['', [$h,$h]],
-    ["(SELECT ? AS $hi->{keys}[0], ? AS $hi->{keys}[1] UNION ALL SELECT ?, ?)",
-    @{$hi->{values}}, @{$hi->{values}}], 'vh 2 2 (resultset)');
+    ["(SELECT ? AS one, ? AS two UNION ALL SELECT ?, ?)",
+    1, 2, 1, 2], 'vh 2 2 (resultset)');
 interp_test(['FROM', [[1]], 'JOIN', [[2]]],
     ['FROM (SELECT ?) AS tbl0 JOIN (SELECT ?) AS tbl1', 1, 2], 'vv 1 1 join vv 1 1');
 interp_test(['FROM', [[sql(1)]]], ['FROM (SELECT 1) AS tbl0'], 'vv 1 1 of sql(1)');
