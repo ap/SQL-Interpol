@@ -183,12 +183,15 @@ one regular SQL string along with a list of bind values, suitable for passing
 to DBI. This makes database code easier to read as well as easier to write,
 while easily providing ready access to all SQL features.
 
+SQL::Interpol is a drop-in replacement for most of L<SQL::Interp>.
+(Some features have been removed; please refer to the changelog.)
+
 =head1 INTERFACE
 
 The recommended way to use SQL::Interpol is via its L<DBIx::Simple> integration,
 which provides an excellent alternative to plain DBI access:
 
-  use DBIx::Simple;
+  use DBIx::Simple::Interpol;
   # ...
   my $rows = $db->iquery( '
       SELECT title
@@ -198,6 +201,8 @@ which provides an excellent alternative to plain DBI access:
   ' )->arrays;
 
 The C<iquery> method integrates L</sql_interp> directly into L<DBIx::Simple>.
+Note that this requires loading L<DBIx::Simple::Interpol> instead of (or after)
+L<DBIx::Simple>, as its native integration will use L<SQL::Interp> otherwise.
 
 =head2 C<sql_interp>
 
