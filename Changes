@@ -1,0 +1,11 @@
+Release history for SQL-Interpol
+
+1.000 Fri 26 Dec 2014
+	- FORKED FROM SQL::Interp 1.22
+	- Removed DBIx::Interp and its supporting sql_type() feature
+	- Removed strict mode
+	- Removed STDERR debug output; please use DBI tracing instead
+	- Removed lots of left-over SQL::Interpolate vestiges
+	- Cleaned up test suite, now uses Test::Differences
+	- Massive refactoring of the parser, now sane and clean
+	- Added DBIx::Simple::Interpol monkey-patcher to hook into DBIS SQLI support

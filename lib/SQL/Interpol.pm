@@ -3,6 +3,8 @@ use warnings;
 
 package SQL::Interpol;
 
+# ABSTRACT: interpolate Perl variables into SQL statements
+
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
 sub sql { bless [ @_ ], __PACKAGE__ }
@@ -413,3 +415,10 @@ syntax, so in such case, use a more direct syntax:
 In the cases where this module parses or generates SQL fragments, this module
 should work for many databases, but is known to work well on MySQL and
 PostgreSQL.
+
+=head1 COPYRIGHT AND LICENSE
+
+This documentation is
+copyright (c) 2003E<ndash>2005 by David Manura
+and
+copyright (c) 2006E<ndash>2012 by Mark Stosberg.
