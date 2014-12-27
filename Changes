@@ -1,5 +1,9 @@
 Release history for SQL-Interpol
 
+1.001 Sat 27 Dec 2014
+	- Simplified and removed lots of method call overhead
+	- Made some generated SQL slightly prettier
+
 1.000 Fri 26 Dec 2014
 	- FORKED FROM SQL::Interp 1.22
 	- Removed DBIx::Interp and its supporting sql_type() feature
