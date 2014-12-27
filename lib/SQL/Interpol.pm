@@ -68,7 +68,7 @@ sub parse {
                 : 'REF'    eq $type && 'ARRAY' eq ref $$item ? @$$item
                 : $error->();
             $sql .= @value
-                ? $1 . ' (' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')'
+                ? $1 . ' (' . join( ', ', $self->bind_or_parse_values( @value ) ) . ')'
                 : ( $2 ? ' 1=1' : ' 1=0' );
         }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
@@ -81,7 +81,7 @@ sub parse {
                     @$item{ @key };
                 }
                 : $error->();
-            $sql .= ' VALUES(' . join( ', ', map { $self->bind_or_parse_value( $_ ) } @value ) . ')';
+            $sql .= ' VALUES(' . join( ', ', $self->bind_or_parse_values( @value ) ) . ')';
         }
         elsif ( 'SCALAR' eq $type ) {
             push @$bind, $$item;
@@ -91,7 +91,7 @@ sub parse {
             if ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i ) {
                 _error 'Hash has zero elements.' if not keys %$item;
                 my @k = sort keys %$item;
-                my @v = map { $self->bind_or_parse_value( $_ ) } @$item{ @k };
+                my @v = $self->bind_or_parse_values( @$item{ @k } );
                 $sql .= ' ' . join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
             }
             elsif ( not keys %$item ) {
@@ -101,12 +101,12 @@ sub parse {
                 my $cond = join ' AND ', map {
                     my $expr = $_;
                     my $eval = $item->{ $expr };
-                    ( not defined $eval )  ? $expr . ' IS NULL'
-                    : 'ARRAY' ne ref $eval ? $expr . '=' . $self->bind_or_parse_value( $eval )
+                    ( not defined $eval )  ? "$expr IS NULL"
+                    : 'ARRAY' ne ref $eval ? map { "$expr=$_" } $self->bind_or_parse_values( $eval )
                     : do {
                         @$eval ? do {
-                            my @v = map { $self->bind_or_parse_value( $_ ) } @$eval;
-                            $expr . ' IN (' . join( ', ', @v ) . ')';
+                            my $list = join ', ', $self->bind_or_parse_values( @$eval );
+                            "$expr IN ($list)";
                         } : '1=0';
                     }
                 } sort keys %$item;
@@ -129,17 +129,17 @@ sub parse {
             if ( 'ARRAY' eq $type0 ) {
                 _error 'table reference has zero columns' if not @$row0; # improve?
                 $sql .= join ' UNION ALL ', map {
-                    'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_;
+                    'SELECT ' . join ', ', $self->bind_or_parse_values( @$_ );
                 } @$item;
             }
             elsif ( 'HASH' eq $type0 ) {
                 _error 'table reference has zero columns' if not keys %$row0; # improve?
                 my @k = sort keys %$row0;
                 $sql .= join ' UNION ALL ', do {
-                    my @v = map { $self->bind_or_parse_value( $_ ) } @$row0{ @k };
+                    my @v = $self->bind_or_parse_values( @$row0{ @k } );
                     'SELECT ' . join ', ', map "$v[$_] AS $k[$_]", 0 .. $#k;
                 }, map {
-                    'SELECT ' . join ', ', map { $self->bind_or_parse_value( $_ ) } @$_{ @k };
+                    'SELECT ' . join ', ', $self->bind_or_parse_values( @$_{ @k } );
                 } @$item[ 1 .. $#$item ];
             }
             else { $error->() }
@@ -153,13 +153,13 @@ sub parse {
     return $sql;
 }
 
-# interpolate value from aggregate variable (hashref or arrayref)
-sub bind_or_parse_value {
+# interpolate values from aggregate variable (hashref or arrayref)
+sub bind_or_parse_values {
     my $self = shift;
-    my ( $elem ) = @_;
-    return $self->parse( $elem ) if ref $elem; # e.g. sql()
-    push @{ $self->bind }, $elem;
-    return '?';
+    map { ref $_
+        ? $self->parse( $_ )
+        : do { push @{ $self->bind }, $_; '?' }
+    } @_;
 }
 
 1;
