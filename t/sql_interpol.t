@@ -22,7 +22,7 @@ interp_test(['SELECT * FROM mytable'],
             ['SELECT * FROM mytable'],
             'string');
 interp_test([\$x],
-            [' ?', $x],
+            ['?', $x],
             'scalarref');
 
 # test with sql()
@@ -33,10 +33,10 @@ interp_test([sql('test')],
             ['test'],
             'sql(string)');
 interp_test([sql(\$x)],
-            [' ?', $x],
+            ['?', $x],
             'sql(scalarref)');
 interp_test([sql(sql(\$x))],
-            [' ?', $x],
+            ['?', $x],
             'sql(sql(scalarref))');
 interp_test([sql(sql(),sql())],
             [''],
@@ -63,7 +63,7 @@ interp_test(['INSERT INTO mytable', $v2],
             ['INSERT INTO mytable VALUES(?, two)', 'one'],
             'INSERT arrayref of size > 0 with sql()');
 interp_test(['INSERT INTO mytable', [1, sql(\$x, '*', \$x)]],
-            ['INSERT INTO mytable VALUES(?,  ? * ?)', 1, $x, $x],
+            ['INSERT INTO mytable VALUES(?, ? * ?)', 1, $x, $x],
             'INSERT arrayref of size > 0 with sql()');
 # OK in mysql
 interp_test(['INSERT INTO mytable', $h0],
@@ -73,7 +73,7 @@ interp_test(['INSERT INTO mytable', $h],
             ['INSERT INTO mytable (one, two) VALUES(?, ?)', 1, 2],
             'INSERT hashref of size > 0');
 interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
-            ['INSERT INTO mytable (one, two) VALUES(?,  ? * ?)', 1, $x, $x],
+            ['INSERT INTO mytable (one, two) VALUES(?, ? * ?)', 1, $x, $x],
             'INSERT hashref with sql()');
 # mysql
 interp_test(['INSERT HIGH_PRIORITY IGNORE INTO mytable', $v],
@@ -110,7 +110,7 @@ interp_test(['WHERE field IN', $v2],
             ['WHERE field IN (?, two)', 'one'],
             'IN arrayref with sql()');
 interp_test(['WHERE field IN', [1, sql(\$x, '*', \$x)]],
-            ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
+            ['WHERE field IN (?, ? * ?)', 1, $x, $x],
             'IN arrayref with sql()');
 interp_test(['WHERE', {field => $v}],
             ['WHERE field IN (?, ?)', 'one', 'two'],
@@ -119,7 +119,7 @@ interp_test(['WHERE', {field => $v0}],
             ['WHERE 1=0'],
             'hashref with arrayref of size = 0');
 interp_test(['WHERE', {field => [1, sql(\$x, '*', \$x)]}],
-            ['WHERE field IN (?,  ? * ?)', 1, $x, $x],
+            ['WHERE field IN (?, ? * ?)', 1, $x, $x],
             'hashref with arrayref with sql()');
 interp_test(['WHERE field in', $v0],
             ['WHERE 1=0'],
@@ -183,7 +183,7 @@ interp_test(['FROM', [[1]], 'JOIN', [[2]]],
 interp_test(['FROM', [[sql(1)]]], ['FROM (SELECT 1) AS tbl0'], 'vv 1 1 of sql(1)');
 interp_test(['', [[sql(1)]]], ['(SELECT 1)'], 'vv 1 1 of sql(1) (resultset)');
 interp_test(['FROM', [{a => sql(1)}]], ['FROM (SELECT 1 AS a) AS tbl0'], 'vh 1 1 of sql(1)');
-interp_test(['FROM', [[sql(\1)]]], ['FROM (SELECT  ?) AS tbl0', 1], 'vv 1 1 of sql(\1)');
+interp_test(['FROM', [[sql(\1)]]], ['FROM (SELECT ?) AS tbl0', 1], 'vv 1 1 of sql(\1)');
 interp_test(['FROM', [[sql('1=', \1)]]],
     ['FROM (SELECT 1= ?) AS tbl0', 1], 'vv 1 1 of sql(s,\1)');
 interp_test(['FROM', [[1]], ' AS mytable'],

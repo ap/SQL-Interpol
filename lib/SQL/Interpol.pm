@@ -48,27 +48,24 @@ sub parse {
     while ( @_ ) {
         $item = shift @_;
         my $type = ref $item;
-
-        if ( not $type ) {
-            $sql .= ' ' if $sql =~ /\S/ and $item !~ /\A\s/;
-            $sql .= $item;
-            $prev = $item;
-            next;
-        }
+        my $append;
 
         if ( 'SQL::Interpol' eq $type ) {
             unshift @_, @$item;
             next;
         }
 
-        if ( $sql =~ s/(\s*$ident_rx\s+(NOT\s+)?IN)\s*$//i ) {
+        if ( not $type ) {
+            $prev = $append = $item;
+        }
+        elsif ( $sql =~ s/(\s*$ident_rx\s+(NOT\s+)?IN)\s*$//i ) {
             my @value
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
                 : 'REF'    eq $type && 'ARRAY' eq ref $$item ? @$$item
                 : $error->();
             my $list = @value && join ', ', $self->bind_or_parse_values( @value );
-            $sql .= @value ? "$1 ($list)" : $2 ? ' 1=1' : ' 1=0';
+            $append = @value ? "$1 ($list)" : $2 ? '1=1' : '1=0';
         }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
             my @value
@@ -77,26 +74,26 @@ sub parse {
                 : 'HASH'   eq $type ? do {
                     my @key = sort keys %$item;
                     my $list = join ', ', @key;
-                    $sql .= " ($list)";
+                    $append = "($list) ";
                     @$item{ @key };
                 }
                 : $error->();
             my $list = @value ? join ', ', $self->bind_or_parse_values( @value ) : '';
-            $sql .= " VALUES($list)";
+            $append .= "VALUES($list)";
         }
         elsif ( 'SCALAR' eq $type ) {
             push @$bind, $$item;
-            $sql .= ' ?';
+            $append = '?';
         }
         elsif ( 'HASH' eq $type ) {  # e.g. WHERE {x = 3, y = 4}
             if ( $sql =~ /\b(?:ON\s+DUPLICATE\s+KEY\s+UPDATE|SET)\s*$/i ) {
                 _error 'Hash has zero elements.' if not keys %$item;
                 my @k = sort keys %$item;
                 my @v = $self->bind_or_parse_values( @$item{ @k } );
-                $sql .= ' ' . join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
+                $append = join ', ', map "$k[$_]=$v[$_]", 0 .. $#k;
             }
             elsif ( not keys %$item ) {
-                $sql .= ' 1=1';
+                $append = '1=1';
             }
             else {
                 my $cond = join ' AND ', map {
@@ -112,7 +109,7 @@ sub parse {
                     }
                 } sort keys %$item;
                 $cond = "($cond)" if keys %$item > 1;
-                $sql .= ' ' . $cond;
+                $append = $cond;
             }
         }
         elsif ( 'ARRAY' eq $type ) {  # result set
@@ -121,22 +118,19 @@ sub parse {
             # e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
             my $do_alias = $sql =~ /(?:\bFROM|JOIN)\s*$/i && ( $_[0] // '' ) !~ /\s*AS\b/i;
 
-            $sql .= ' ' unless $sql eq '';
-            $sql .= '(';
-
             my $row0  = $item->[0];
             my $type0 = ref $row0;
 
             if ( 'ARRAY' eq $type0 ) {
                 _error 'table reference has zero columns' if not @$row0; # improve?
-                $sql .= join ' UNION ALL ', map {
+                $append = join ' UNION ALL ', map {
                     'SELECT ' . join ', ', $self->bind_or_parse_values( @$_ );
                 } @$item;
             }
             elsif ( 'HASH' eq $type0 ) {
                 _error 'table reference has zero columns' if not keys %$row0; # improve?
                 my @k = sort keys %$row0;
-                $sql .= join ' UNION ALL ', do {
+                $append = join ' UNION ALL ', do {
                     my @v = $self->bind_or_parse_values( @$row0{ @k } );
                     'SELECT ' . join ', ', map "$v[$_] AS $k[$_]", 0 .. $#k;
                 }, map {
@@ -145,10 +139,14 @@ sub parse {
             }
             else { $error->() }
 
-            $sql .= ')';
-            $sql .= ' AS tbl' . $self->alias_id++ if $do_alias;
+            $append  = "($append)";
+            $append .= ' AS tbl' . $self->alias_id++ if $do_alias;
         }
         else { $error->() }
+
+        next if not defined $append;
+        $sql .= ' ' if $sql =~ /\S/ and $append !~ /\A\s/;
+        $sql .= $append;
     }
 
     return $sql;
