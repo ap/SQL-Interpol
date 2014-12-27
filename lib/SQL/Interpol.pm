@@ -67,9 +67,8 @@ sub parse {
                 : 'ARRAY'  eq $type ? @$item
                 : 'REF'    eq $type && 'ARRAY' eq ref $$item ? @$$item
                 : $error->();
-            $sql .= @value
-                ? $1 . ' (' . join( ', ', $self->bind_or_parse_values( @value ) ) . ')'
-                : ( $2 ? ' 1=1' : ' 1=0' );
+            my $list = @value && join ', ', $self->bind_or_parse_values( @value );
+            $sql .= @value ? "$1 ($list)" : $2 ? ' 1=1' : ' 1=0';
         }
         elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
             my @value
@@ -77,11 +76,13 @@ sub parse {
                 : 'ARRAY'  eq $type ? @$item
                 : 'HASH'   eq $type ? do {
                     my @key = sort keys %$item;
-                    $sql .= ' (' . join( ', ', @key ) . ')';
+                    my $list = join ', ', @key;
+                    $sql .= " ($list)";
                     @$item{ @key };
                 }
                 : $error->();
-            $sql .= ' VALUES(' . join( ', ', $self->bind_or_parse_values( @value ) ) . ')';
+            my $list = @value ? join ', ', $self->bind_or_parse_values( @value ) : '';
+            $sql .= " VALUES($list)";
         }
         elsif ( 'SCALAR' eq $type ) {
             push @$bind, $$item;
