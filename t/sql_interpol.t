@@ -6,12 +6,10 @@ use Test::Differences;
 use SQL::Interpol ':all';
 
 my $x = 5;
-my $y = 6;
 my $v0 = [];
 my $v = ['one', 'two'];
 my $v2 = ['one', sql('two')];
 my $h0 = {};
-
 my $h = {one => 1, two => 2};
 
 #== trivial cases
