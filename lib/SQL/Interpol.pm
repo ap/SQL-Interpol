@@ -40,9 +40,8 @@ sub parse {
 
     my ( $item, $prev );
     my $error = sub {
-        my $msg = "Unrecognized element '$item'";
-        $msg .= " following '$prev'" if defined $prev;
-        _error $msg;
+        my $where = defined $prev ? " following '$prev'" : '';
+        _error "Unrecognized element '$item'$where";
     };
 
     while ( @_ ) {
