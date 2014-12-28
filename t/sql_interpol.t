@@ -5,12 +5,26 @@ use Test::More 0.88; # for done_testing
 use Test::Differences;
 use SQL::Interpol ':all';
 
-my $x = 5;
-my $v0 = [];
-my $v = ['one', 'two'];
-my $v2 = ['one', sql('two')];
+sub interp_test {
+    my ( $snips, $expect, $name ) = @_;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    eq_or_diff [ sql_interp @$snips ], $expect, $name;
+}
+
+sub error_test {
+    my ( $list, $re, $name ) = @_;
+    local $Test::Builder::Level = $Test::Builder::Level + 1;
+    local $@;
+    eval { sql_interp @$list };
+    like $@, $re, $name;
+}
+
+my $x  = 5;
+my $r0 = [];
+my $r  = [ 'one',     'two'  ];
+my $rs = [ 'one', sql('two') ];
 my $h0 = {};
-my $h = {one => 1, two => 2};
+my $h  = { one => 1, two => 2 };
 
 #== trivial cases
 interp_test([],
@@ -51,13 +65,13 @@ interp_test(['INSERT INTO mytable', sql($x)],
             ["INSERT INTO mytable $x"], # invalid
             'INSERT sql(...)');
 # OK in mysql
-interp_test(['INSERT INTO mytable', $v0],
+interp_test(['INSERT INTO mytable', $r0],
             ['INSERT INTO mytable VALUES()'],
             'INSERT arrayref of size = 0');
-interp_test(['INSERT INTO mytable', $v],
-            ['INSERT INTO mytable VALUES(?, ?)', @$v],
+interp_test(['INSERT INTO mytable', $r],
+            ['INSERT INTO mytable VALUES(?, ?)', @$r],
             'INSERT arrayref of size > 0');
-interp_test(['INSERT INTO mytable', $v2],
+interp_test(['INSERT INTO mytable', $rs],
             ['INSERT INTO mytable VALUES(?, two)', 'one'],
             'INSERT arrayref of size > 0 with sql()');
 interp_test(['INSERT INTO mytable', [1, sql(\$x, '*', \$x)]],
@@ -74,8 +88,8 @@ interp_test(['INSERT INTO mytable', {one => 1, two => sql(\$x, '*', \$x)}],
             ['INSERT INTO mytable (one, two) VALUES(?, ? * ?)', 1, $x, $x],
             'INSERT hashref with sql()');
 # mysql
-interp_test(['INSERT HIGH_PRIORITY IGNORE INTO mytable', $v],
-            ['INSERT HIGH_PRIORITY IGNORE INTO mytable VALUES(?, ?)', @$v],
+interp_test(['INSERT HIGH_PRIORITY IGNORE INTO mytable', $r],
+            ['INSERT HIGH_PRIORITY IGNORE INTO mytable VALUES(?, ?)', @$r],
             'INSERT [mod] arrayref of size > 0');
 
 # IN
@@ -92,34 +106,34 @@ interp_test(['WHERE field IN', \$maybe_array],
 interp_test(['WHERE field IN', sql($x)],
             ["WHERE field IN $x"], # invalid
             'IN sql()');
-interp_test(['WHERE field IN', $v0],
+interp_test(['WHERE field IN', $r0],
             ['WHERE 1=0'],
             'IN arrayref of size = 0');
 
-interp_test(['WHERE field NOT IN', $v0],
+interp_test(['WHERE field NOT IN', $r0],
             ['WHERE 1=1'],
             'NOT IN arrayref of size = 0');
 
 
-interp_test(['WHERE field IN', $v],
-            ['WHERE field IN (?, ?)', @$v],
+interp_test(['WHERE field IN', $r],
+            ['WHERE field IN (?, ?)', @$r],
             'IN arrayref of size > 0');
-interp_test(['WHERE field IN', $v2],
+interp_test(['WHERE field IN', $rs],
             ['WHERE field IN (?, two)', 'one'],
             'IN arrayref with sql()');
 interp_test(['WHERE field IN', [1, sql(\$x, '*', \$x)]],
             ['WHERE field IN (?, ? * ?)', 1, $x, $x],
             'IN arrayref with sql()');
-interp_test(['WHERE', {field => $v}],
+interp_test(['WHERE', {field => $r}],
             ['WHERE field IN (?, ?)', 'one', 'two'],
             'hashref with arrayref');
-interp_test(['WHERE', {field => $v0}],
+interp_test(['WHERE', {field => $r0}],
             ['WHERE 1=0'],
             'hashref with arrayref of size = 0');
 interp_test(['WHERE', {field => [1, sql(\$x, '*', \$x)]}],
             ['WHERE field IN (?, ? * ?)', 1, $x, $x],
             'hashref with arrayref with sql()');
-interp_test(['WHERE field in', $v0],
+interp_test(['WHERE field in', $r0],
             ['WHERE 1=0'],
             'IN lowercase');  # fails in 0.31
 
@@ -192,17 +206,3 @@ interp_test(['FROM', [{a => undef}]],
     ['FROM (SELECT ? AS a) AS tbl0', undef], 'vh 1 1 of undef');
 
 done_testing;
-
-sub interp_test {
-    my ( $snips, $expect, $name ) = @_;
-    local $Test::Builder::Level = $Test::Builder::Level + 1;
-    eq_or_diff [ sql_interp @$snips ], $expect, $name;
-}
-
-sub error_test {
-    my ( $list, $re, $name ) = @_;
-    local $Test::Builder::Level = $Test::Builder::Level + 1;
-    local $@;
-    eval { sql_interp @$list };
-    like $@, $re, $name;
-}
