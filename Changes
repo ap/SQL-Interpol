@@ -1,7 +1,10 @@
 Release history for SQL-Interpol
 
+1.002 Sat 27 Dec 2014
+	- Large test suite refactoring
+
 1.001 Sat 27 Dec 2014
-	- Simplified and removed lots of method call overhead
+	- Simplified code and removed lots of method call overhead
 	- Made some generated SQL slightly prettier
 
 1.000 Fri 26 Dec 2014
