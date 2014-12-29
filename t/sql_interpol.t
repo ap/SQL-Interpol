@@ -26,6 +26,8 @@ my $rs = [ 'one', sql('two') ];
 my $h0 = {};
 my $h  = { one => 1, two => 2 };
 
+can_ok __PACKAGE__, qw( sql_interp sql );
+
 #== trivial cases
 interp_test([],
             [''],
