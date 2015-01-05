@@ -414,6 +414,10 @@ In the cases where this module parses or generates SQL fragments, this module
 should work for many databases, but is known to work well on MySQL and
 PostgreSQL.
 
+=head1 AUTHOR
+
+Documentation by David Manura and Mark Stosberg.
+
 =head1 COPYRIGHT AND LICENSE
 
 This documentation is
