@@ -1,5 +1,9 @@
 Release history for SQL-Interpol
 
+1.004 Sat 10 Jan 2015
+	- No functional changes
+	- No longer contains INSTALL file with install-as-root instructions
+
 1.003 Tue 30 Dec 2014
 	- Split DBIx::Simple::Interpol into a separate distribution
 
