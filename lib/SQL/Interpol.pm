@@ -154,9 +154,8 @@ sub parse {
 # interpolate values from aggregate variable (hashref or arrayref)
 sub bind_or_parse_values {
     my $self = shift;
-    map { ref $_
-        ? $self->parse( $_ )
-        : do { push @{ $self->bind }, $_; '?' }
+    map {
+        ref $_ ? $self->parse( $_ ) : ( '?', push @{ $self->bind }, $_ )[0];
     } @_;
 }
 
