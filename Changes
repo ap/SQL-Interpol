@@ -1,5 +1,10 @@
 Release history for SQL-Interpol
 
+1.100 Sat 10 Oct 2015
+	- Naked hashref value intercept
+	 (Such values are never valid but were accepted, producing malformed SQL.
+	  This could turn insufficient validation of data in the caller into an exposed vulnerability.)
+
 1.004 Sat 10 Jan 2015
 	- No functional changes
 	- No longer contains INSTALL file with install-as-root instructions
