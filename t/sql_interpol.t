@@ -154,4 +154,6 @@ sql_ok q[ 'FROM', [ [ undef ] ] ] =>
 sql_ok q[ 'FROM', [ { a => undef } ] ] =>
 	'FROM (SELECT ? AS a) AS tbl0', undef;
 
+sql_error_ok q[ { some_column => { '1 or 1', '1' } } ], qr/unrecognized HASH value in aggregate/;
+
 done_testing;

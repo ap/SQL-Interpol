@@ -155,7 +155,9 @@ sub parse {
 sub bind_or_parse_values {
     my $self = shift;
     map {
-        ref $_ ? $self->parse( $_ ) : ( '?', push @{ $self->bind }, $_ )[0];
+        my $type = ref;
+        _error "unrecognized $type value in aggregate" if $type and 'HASH' eq $type;
+        $type ? $self->parse( $_ ) : ( '?', push @{ $self->bind }, $_ )[0];
     } @_;
 }
 
