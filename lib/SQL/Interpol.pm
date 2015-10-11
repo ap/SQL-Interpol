@@ -24,6 +24,7 @@ use Object::Tiny::Lvalue qw( alias_id bind );
 use Carp ();
 
 use constant IDENT_RX => qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
+use constant VALID => { ARRAY => 1, SCALAR => 1, 'SQL::Interpol' => 1, '' => 1 };
 
 sub _error { Carp::croak 'SQL::Interpol error: ', @_ }
 
@@ -156,12 +157,12 @@ sub bind_or_parse_values {
     my $self = shift;
     map {
         my $type = ref;
-        _error "unrecognized $type value in aggregate" if $type and 'HASH' eq $type;
+        _error "unrecognized $type value in aggregate" unless VALID->{ $type };
         $type ? $self->parse( $_ ) : ( '?', push @{ $self->bind }, $_ )[0];
     } @_;
 }
 
-undef *IDENT_RX;
+undef *VALID, *IDENT_RX;
 
 1;
 
