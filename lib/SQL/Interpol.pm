@@ -162,7 +162,8 @@ sub bind_or_parse_values {
     } @_;
 }
 
-undef *VALID, *IDENT_RX;
+undef *VALID;
+undef *IDENT_RX;
 
 1;
 
