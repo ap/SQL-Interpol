@@ -382,8 +382,8 @@ latter may load too much meaning into the syntax of C<{}>, C<[]> and C<\>, there
 rendering the meaning less clear:
 
   SQL::Abstract example:
-  %where = (lname => {like => '%son%'},
-            age   => [-and => {'>=', 10}, {'<=', 20}])
+  %where = (lname => {like => '%son'},
+            age   => {'>=', 10, '<=', 20})
   Plain SQL:
   "lname LIKE '%son' AND (age >= 10 AND age <= 20)"
 
