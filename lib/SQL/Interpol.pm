@@ -23,6 +23,8 @@ use Object::Tiny::Lvalue qw( alias_id bind );
 
 use Carp ();
 
+use constant IDENT_RX => qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
+
 sub _error { Carp::croak 'SQL::Interpol error: ', @_ }
 
 sub new {
@@ -32,8 +34,6 @@ sub new {
 
 sub parse {
     my $self = shift;
-
-    state $ident_rx = qr/[a-zA-Z_][a-zA-Z0-9_\$\.]*/;
 
     my $sql = '';
     my $bind = $self->bind;
@@ -57,7 +57,7 @@ sub parse {
         if ( not $type ) {
             $prev = $append = $item;
         }
-        elsif ( $sql =~ s/(\s*$ident_rx\s+(NOT\s+)?IN)\s*$//i ) {
+        elsif ( $sql =~ s/(\s*${(IDENT_RX)}\s+(NOT\s+)?IN)\s*$//oi ) {
             my @value
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
@@ -66,7 +66,7 @@ sub parse {
             my $list = @value && join ', ', $self->bind_or_parse_values( @value );
             $append = @value ? "$1 ($list)" : $2 ? '1=1' : '1=0';
         }
-        elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*$ident_rx\s*$/i ) {
+        elsif ( $sql =~ /\b(REPLACE|INSERT)[\w\s]*\sINTO\s*${(IDENT_RX)}\s*$/oi ) {
             my @value
                 = 'SCALAR' eq $type ? $$item
                 : 'ARRAY'  eq $type ? @$item
@@ -160,6 +160,8 @@ sub bind_or_parse_values {
         $type ? $self->parse( $_ ) : ( '?', push @{ $self->bind }, $_ )[0];
     } @_;
 }
+
+undef *IDENT_RX;
 
 1;
 
