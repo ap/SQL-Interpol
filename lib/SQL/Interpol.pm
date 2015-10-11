@@ -1,4 +1,4 @@
-use 5.012;
+use 5.006;
 use warnings;
 
 package SQL::Interpol;
@@ -116,7 +116,7 @@ sub parse {
             _error 'table reference has zero rows' if not @$item; # improve?
 
             # e.g. [[1,2],[3,4]] or [{a=>1,b=>2},{a=>3,b=>4}].
-            my $do_alias = $sql =~ /(?:\bFROM|JOIN)\s*$/i && ( $_[0] // '' ) !~ /\s*AS\b/i;
+            my $do_alias = $sql =~ /(?:\bFROM|JOIN)\s*$/i && ( $_[0] || '' ) !~ /\s*AS\b/i;
 
             my $row0  = $item->[0];
             my $type0 = ref $row0;
