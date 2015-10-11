@@ -1,5 +1,8 @@
 Release history for SQL-Interpol
 
+1.101 Sun 11 Oct 2015
+	- Minimum Perl version requirement drop
+
 1.100 Sat 10 Oct 2015
 	- Naked hashref value intercept
 	 (Such values are never valid but were accepted, producing malformed SQL.
