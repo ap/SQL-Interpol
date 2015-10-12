@@ -1,5 +1,9 @@
 Release history for SQL-Interpol
 
+1.103 Mon 12 Oct 2015
+	- Reinstated strictures (forgotten during Perl version drop)
+	- Fix for some perl 5.8.9/5.10.1 failures
+
 1.102 Sun 11 Oct 2015
 	- Minimum Perl version requirement drop
 
