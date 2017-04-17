@@ -169,6 +169,8 @@ undef *VALID;
 
 __END__
 
+=pod
+
 =head1 SYNOPSIS
 
   use SQL::Interpol ':all';
