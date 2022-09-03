@@ -2,7 +2,7 @@ use 5.006; use strict; use warnings;
 
 package SQL::Interpol;
 
-# ABSTRACT: interpolate Perl variables into SQL statements
+our $VERSION = '1.103';
 
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
@@ -17,6 +17,8 @@ sub sql_interp {
 
 
 package SQL::Interpol::Parser;
+
+our $VERSION = '1.103';
 
 use Object::Tiny::Lvalue qw( alias_id bind );
 
@@ -166,6 +168,14 @@ undef *VALID;
 1;
 
 __END__
+
+=pod
+
+=encoding UTF-8
+
+=head1 NAME
+
+SQL::Interpol - interpolate Perl variables into SQL statements
 
 =head1 SYNOPSIS
 
@@ -417,13 +427,4 @@ In the cases where this module parses or generates SQL fragments, this module
 should work for many databases, but is known to work well on MySQL and
 PostgreSQL.
 
-=head1 AUTHOR
-
-Documentation by David Manura and Mark Stosberg.
-
-=head1 COPYRIGHT AND LICENSE
-
-This documentation is
-copyright (c) 2003E<ndash>2005 by David Manura
-and
-copyright (c) 2006E<ndash>2012 by Mark Stosberg.
+=cut
