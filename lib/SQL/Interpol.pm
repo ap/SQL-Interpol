@@ -2,7 +2,7 @@ use 5.006; use strict; use warnings;
 
 package SQL::Interpol;
 
-our $VERSION = '1.103';
+our $VERSION = '1.104';
 
 use Exporter::Tidy all => [ qw( sql_interp sql ) ];
 
@@ -18,7 +18,7 @@ sub sql_interp {
 
 package SQL::Interpol::Parser;
 
-our $VERSION = '1.103';
+our $VERSION = '1.104';
 
 use Object::Tiny::Lvalue qw( alias_id bind );
 
